@@ -6,6 +6,7 @@ import type { FloorplanAnalysis } from '@/types/project';
 
 export async function analyzePlanWithSDK(imageBase64: string, apiKey: string): Promise<FloorplanAnalysis> {
   const { FLOORPLAN_ANALYSIS_PROMPT } = await import('./prompts');
+  const anthropicVisionModel = process.env.ANTHROPIC_VISION_MODEL || 'claude-sonnet-4-20250514';
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -15,7 +16,7 @@ export async function analyzePlanWithSDK(imageBase64: string, apiKey: string): P
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: anthropicVisionModel,
       max_tokens: 8192,
       messages: [
         {

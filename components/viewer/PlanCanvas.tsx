@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { DetectedUnit, Point, WallLine } from '@/types/project';
+import { useCorrectionLogger } from '@/hooks/useCorrectionLogger';
 
 // Simple canvas-based plan viewer with polygon editing
 // Uses plain HTML Canvas + mouse events — no library conflicts
@@ -45,6 +46,12 @@ interface PlanCanvasProps {
   onUpdatePolygon: (unitId: string, polygon: Point[]) => void;
   wallLines?: WallLine[];
   showWallLines?: boolean;
+  // Correction logging props (optional)
+  projectId?: string;
+  fileId?: string;
+  inputFileType?: 'dwg' | 'dxf' | 'pdf';
+  moodId?: string;
+  operatorEmail?: string;
 }
 
 interface ViewState {
@@ -61,6 +68,11 @@ export default function PlanCanvas({
   onUpdatePolygon,
   wallLines = [],
   showWallLines = false,
+  projectId = '',
+  fileId = '',
+  inputFileType = 'pdf',
+  moodId,
+  operatorEmail,
 }: PlanCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -68,6 +80,15 @@ export default function PlanCanvas({
   const [imageLoaded, setImageLoaded] = useState(false);
   const viewRef = useRef<ViewState>({ offsetX: 0, offsetY: 0, scale: 1 });
   const [, forceRender] = useState(0);
+
+  // Initialize correction logger (V2 training data collection)
+  const correctionLogger = useCorrectionLogger({
+    projectId,
+    fileId,
+    inputFileType,
+    moodId,
+    operatorEmail,
+  });
 
   // Interaction state
   const dragRef = useRef<{
@@ -82,6 +103,36 @@ export default function PlanCanvas({
   } | null>(null);
   const rafRef = useRef<number>(0);
   const pendingDragPos = useRef<{ sx: number; sy: number; shiftKey?: boolean } | null>(null);
+
+  // Wrapped polygon update handler that logs corrections
+  const handleUpdatePolygonWithLogging = useCallback(
+    async (unitId: string, newPolygon: Point[]) => {
+      const unit = units.find(u => u.id === unitId);
+      if (!unit) return;
+
+      const originalPolygon = unit.polygon;
+
+      // Call original handler
+      onUpdatePolygon(unitId, newPolygon);
+
+      // Log the correction if we have project context
+      if (projectId && fileId) {
+        try {
+          await correctionLogger.logPolygonEdit(
+            unit,
+            originalPolygon,
+            newPolygon,
+            undefined, // operatorNotes
+            0.95 // Operator-made edits are always high confidence
+          );
+        } catch (err) {
+          console.warn('[PlanCanvas] Failed to log correction:', err);
+          // Don't block UI — correction logging is async
+        }
+      }
+    },
+    [units, onUpdatePolygon, projectId, fileId, correctionLogger]
+  );
 
   // Load image
   useEffect(() => {
@@ -292,7 +343,7 @@ export default function PlanCanvas({
       const p2 = unit.polygon[(hit.vertexIndex + 1) % unit.polygon.length];
       const newPoly = [...unit.polygon];
       newPoly.splice(hit.vertexIndex + 1, 0, { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 });
-      onUpdatePolygon(unit.id, newPoly);
+      handleUpdatePolygonWithLogging(unit.id, newPoly);
       // Start dragging the new vertex immediately
       dragRef.current = {
         type: 'vertex',
@@ -317,7 +368,7 @@ export default function PlanCanvas({
       startOffsetX: viewRef.current.offsetX,
       startOffsetY: viewRef.current.offsetY,
     };
-  }, [hitTest, units, selectedUnitId, onSelectUnit, onUpdatePolygon]);
+  }, [hitTest, units, selectedUnitId, onSelectUnit, handleUpdatePolygonWithLogging]);
 
   // Process vertex drag in rAF for smooth 60fps updates
   const processVertexDrag = useCallback(() => {
@@ -350,9 +401,9 @@ export default function PlanCanvas({
 
     const newPoly = [...unit.polygon];
     newPoly[vertexIndex] = pct;
-    onUpdatePolygon(unitId, newPoly);
+    handleUpdatePolygonWithLogging(unitId, newPoly);
     pendingDragPos.current = null;
-  }, [units, screenToPct, onUpdatePolygon]);
+  }, [units, screenToPct, handleUpdatePolygonWithLogging]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -428,10 +479,10 @@ export default function PlanCanvas({
     if (hit.type === 'vertex' && hit.unitId && hit.vertexIndex !== undefined) {
       const unit = units.find(u => u.id === hit.unitId);
       if (unit && unit.polygon.length > 3) {
-        onUpdatePolygon(unit.id, unit.polygon.filter((_, i) => i !== hit.vertexIndex));
+        handleUpdatePolygonWithLogging(unit.id, unit.polygon.filter((_, i) => i !== hit.vertexIndex));
       }
     }
-  }, [hitTest, units, onUpdatePolygon]);
+  }, [hitTest, units, handleUpdatePolygonWithLogging]);
 
   // --- Drawing ---
   useEffect(() => {
@@ -508,10 +559,10 @@ export default function PlanCanvas({
       const fillAlphaHex = isSelected
         ? '00'
         : isMirror
-        ? '38' // ~22%
-        : isVariant
-        ? '28' // ~16%
-        : '12'; // ~7% — hoofdtype is the most subdued so mirrors stand out
+          ? '38' // ~22%
+          : isVariant
+            ? '28' // ~16%
+            : '12'; // ~7% — hoofdtype is the most subdued so mirrors stand out
       ctx.fillStyle = isSelected ? 'rgba(255,255,255,0.08)' : color + fillAlphaHex;
       ctx.fill();
 
@@ -537,8 +588,8 @@ export default function PlanCanvas({
         const labelText = isMirror
           ? `↔ ${unit.label}`
           : isVariant
-          ? `~ ${unit.label}`
-          : unit.label;
+            ? `~ ${unit.label}`
+            : unit.label;
         const tm = ctx.measureText(labelText);
         ctx.fillStyle = 'rgba(255,255,255,0.92)';
         ctx.fillRect(cx - tm.width / 2 - 5, cy - fontSize / 2 - 3, tm.width + 10, fontSize + 6);

@@ -1,31 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import dynamic_import from 'next/dynamic';
 import { useRouter, useParams } from 'next/navigation';
 import { useProjectStore } from '@/stores/project-store';
-import { generateMockAnalysis } from '@/lib/mock-data';
 import type { DetectedUnit, FloorplanAnalysis, Point, WallLine } from '@/types/project';
-
-/**
- * Type-validatie page.
- *
- * Two stacked sections so the user can do both things at once:
- *
- *  1. The actual uploaded plan as the "onderlegger" with all detected
- *     unit polygons overlaid. Click a unit to select; drag the orange
- *     vertices to correct the boundary; double-click a vertex to
- *     remove it. This is the existing PlanCanvas — restored after a
- *     brief detour through a too-simple cards-only view.
- *
- *  2. A compact summary row underneath listing each UNIQUE typeGroup
- *     with its count, classification breakdown, and a "Selecteer" link
- *     that focuses that type in the canvas above. This replaces the
- *     old dense right sidebar with all 15 individual units.
- *
- * Mirrors and variants are folded into their hoofdtype card so users
- * don't have to scan 8 nearly-identical entries.
- */
 
 const PlanCanvas = dynamic_import(() => import('@/components/viewer/PlanCanvas'), {
   ssr: false,
@@ -42,8 +21,6 @@ interface UniqueType {
   mirrorCount: number;
   variantCount: number;
 }
-
-/* ----- Bowtie fixer (mirrors the helper in /api/analyze) ----- */
 
 function isSelfIntersecting(points: { x: number; y: number }[]): boolean {
   const n = points.length;
@@ -99,12 +76,6 @@ function sortPolygonClockwise(points: Point[]): Point[] {
   });
 }
 
-/**
- * Walk the analysis units and fix any self-intersecting polygons by
- * sorting their vertices by angle from centroid. Returns null if
- * nothing needed fixing (so we don't trigger an unnecessary store
- * update).
- */
 function fixBowtiesInAnalysis(
   analysis: FloorplanAnalysis
 ): FloorplanAnalysis | null {
@@ -156,6 +127,7 @@ export default function ValidatiePage() {
   const { project, setAnalysis } = useProjectStore();
   const [isAnalyzing, setIsAnalyzing] = useState(true);
   const [reanalyzing, setReanalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [wallLines, setWallLines] = useState<WallLine[]>([]);
   const [showWallLines, setShowWallLines] = useState(false);
@@ -163,25 +135,32 @@ export default function ValidatiePage() {
     'idle' | 'saving' | 'saved' | 'error'
   >('idle');
   const [editedUnitIds, setEditedUnitIds] = useState<Set<string>>(new Set());
+  const analysisRequestForFile = useRef<string | null>(null);
+
+
 
   const analysis = project?.analysis;
   const uploadedFile = project?.files[0];
+  const pipelineSource = analysis?.source ?? 'gpt4_vision';
+  const pipelineModel = analysis?.aiModel ?? 'gpt-5';
 
-  // Run analysis on mount
   useEffect(() => {
     if (!project) {
       router.replace('/nieuw');
       return;
     }
     if (analysis) {
-      // One-time bowtie fix for cached results from before the API
-      // started auto-fixing them. If any unit has a self-intersecting
-      // polygon, sort the points by angle from centroid.
       const fixed = fixBowtiesInAnalysis(analysis);
       if (fixed) setAnalysis(fixed);
       setIsAnalyzing(false);
       return;
     }
+    const currentFileId = uploadedFile?.id ?? null;
+    if (analysisRequestForFile.current === currentFileId) {
+      return;
+    }
+    analysisRequestForFile.current = currentFileId;
+
     const run = async () => {
       try {
         const csvFileId =
@@ -197,21 +176,34 @@ export default function ValidatiePage() {
             csvFileId,
           }),
         });
-        const data = await res.json();
-        if (data.analysis) setAnalysis(data.analysis);
-        else setAnalysis(generateMockAnalysis());
+
+        const contentType = res.headers.get('content-type') || '';
+        const data = contentType.includes('application/json')
+          ? await res.json()
+          : { error: await res.text() };
+
+        if (!res.ok && !data.error) {
+          throw new Error(`Analyse mislukt (${res.status})`);
+        }
+
+        if (data.error) {
+          setAnalysisError(data.error || 'AI analysis failed');
+        } else if (data.analysis) {
+          setAnalysis(data.analysis);
+          setAnalysisError(null);
+        } else {
+          setAnalysisError('No analysis data returned from pipeline');
+        }
         if (data.dxfWalls) setWallLines(data.dxfWalls);
       } catch (err) {
-        console.error('Analysis failed, using mock:', err);
-        setAnalysis(generateMockAnalysis());
+        console.error('Analysis failed:', err);
+        setAnalysisError(`Analysis pipeline error: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
       setIsAnalyzing(false);
     };
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id]);
+  }, [analysis, project, router, setAnalysis, uploadedFile?.id, uploadedFile?.rasterUrl]);
 
-  // Extract wall lines from PDF after the main analysis settles
   useEffect(() => {
     const fileId = uploadedFile?.id;
     if (!fileId || uploadedFile?.type !== 'pdf') return;
@@ -242,6 +234,7 @@ export default function ValidatiePage() {
 
   const handleReanalyze = async () => {
     setReanalyzing(true);
+    setAnalysisError(null); // Clear errors on re-run
     try {
       const csvFileId =
         typeof window !== 'undefined'
@@ -257,10 +250,17 @@ export default function ValidatiePage() {
         }),
       });
       const data = await res.json();
-      if (data.analysis) setAnalysis(data.analysis);
+
+      if (data.error) {
+        setAnalysisError(data.error);
+      } else if (data.analysis) {
+        setAnalysis(data.analysis);
+      }
+
       if (data.dxfWalls) setWallLines(data.dxfWalls);
     } catch (err) {
       console.error('Reanalysis failed:', err);
+      setAnalysisError(`Reanalysis error: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
     setReanalyzing(false);
   };
@@ -268,10 +268,6 @@ export default function ValidatiePage() {
   const handleUpdatePolygon = useCallback(
     (unitId: string, polygon: Point[]) => {
       if (!analysis) return;
-      // If the user dragged a vertex past another and created a bowtie,
-      // re-sort the polygon by angle from centroid so it stays a simple
-      // shape. The vertex they just dragged still ends up in the right
-      // position in the new ordering.
       const fixed = isSelfIntersecting(polygon)
         ? sortPolygonClockwise(polygon)
         : polygon;
@@ -338,6 +334,28 @@ export default function ValidatiePage() {
     );
   }
 
+  // ADDED: Display the error state to the user instead of rendering a blank screen
+  if (analysisError) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-700 max-w-md">
+          <h2 className="text-lg font-bold">Analyse Mislukt</h2>
+          <p className="mt-2 text-sm">{analysisError}</p>
+          <p className="mt-3 text-[11px] text-red-600/80">
+            Pipeline: {pipelineSource} · model: {pipelineModel}
+          </p>
+          <button
+            onClick={handleReanalyze}
+            disabled={reanalyzing}
+            className="mt-4 rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {reanalyzing ? 'Bezig...' : 'Probeer opnieuw'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!analysis || !project) return null;
 
   const uniqueTypes = summarizeUniqueTypes(analysis.units);
@@ -372,17 +390,20 @@ export default function ValidatiePage() {
               Klik op een unit in het plan om te corrigeren — sleep de oranje
               bolletjes om de polygon aan te passen.
             </p>
+            <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              Pipeline: {pipelineSource} · model: {pipelineModel}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {wallLines.length > 0 && (
               <button
                 type="button"
                 onClick={() => setShowWallLines((v) => !v)}
-                className={`rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors ${
-                  showWallLines
-                    ? 'border-red-300 bg-red-50 text-red-700'
-                    : 'border-border bg-white text-gray-600 hover:bg-gray-50'
-                }`}
+                className={`rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors ${showWallLines
+                  ? 'border-red-300 bg-red-50 text-red-700'
+                  : 'border-border bg-white text-gray-600 hover:bg-gray-50'
+                  }`}
                 title="Toon de extracted muurlijnen uit de DXF/PDF"
               >
                 {showWallLines ? '✕ Verberg muurlijnen' : 'Toon muurlijnen'}
@@ -409,7 +430,7 @@ export default function ValidatiePage() {
           </div>
         </div>
 
-        {/* Main canvas — full plan onderlegger with editable polygons */}
+        {/* Main canvas */}
         <div className="relative mt-5 flex h-[65vh] min-h-[480px] overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
           <PlanCanvas
             imageUrl={imageUrl}
@@ -421,7 +442,7 @@ export default function ValidatiePage() {
             showWallLines={showWallLines}
           />
 
-          {/* Floating selection toolbar — visible when a unit is selected */}
+          {/* Floating selection toolbar */}
           {selectedUnit && (
             <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
               <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-border bg-white/95 px-4 py-2 shadow-xl backdrop-blur">
@@ -436,8 +457,8 @@ export default function ValidatiePage() {
                     {selectedUnit.classification === 'gespiegeld'
                       ? '↔ Gespiegeld'
                       : selectedUnit.classification === 'variant'
-                      ? '~ Variant'
-                      : 'Hoofdtype'}
+                        ? '~ Variant'
+                        : 'Hoofdtype'}
                     {isSelectedEdited && (
                       <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">
                         ✏ aangepast
@@ -450,13 +471,12 @@ export default function ValidatiePage() {
                   type="button"
                   onClick={handleTrainCorrection}
                   disabled={trainingStatus === 'saving'}
-                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${
-                    trainingStatus === 'saved'
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : trainingStatus === 'error'
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${trainingStatus === 'saved'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : trainingStatus === 'error'
                       ? 'bg-red-100 text-red-700'
                       : 'bg-rendoo-600 text-white hover:bg-rendoo-700'
-                  } disabled:opacity-50`}
+                    } disabled:opacity-50`}
                   title="Sla deze polygon op als trainingsvoorbeeld voor de AI"
                 >
                   {trainingStatus === 'saving' && (
@@ -499,7 +519,7 @@ export default function ValidatiePage() {
             </div>
           )}
 
-          {/* Edit indicator chip — top-left when any edits exist */}
+          {/* Edit indicator chip */}
           {editedUnitIds.size > 0 && (
             <div className="pointer-events-none absolute left-4 top-4 flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5 text-[10px] font-semibold text-amber-800 shadow-md ring-1 ring-amber-200">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
@@ -527,18 +547,16 @@ export default function ValidatiePage() {
                   key={t.representative.id ?? t.representative.label}
                   type="button"
                   onClick={() => setSelectedUnitId(t.representative.id)}
-                  className={`group flex items-center gap-3 rounded-xl border bg-white px-4 py-3 text-left transition-all ${
-                    isFocused
-                      ? 'border-rendoo-600 shadow-md shadow-rendoo-200/40'
-                      : 'border-border hover:border-rendoo-300 hover:shadow-sm'
-                  }`}
+                  className={`group flex items-center gap-3 rounded-xl border bg-white px-4 py-3 text-left transition-all ${isFocused
+                    ? 'border-rendoo-600 shadow-md shadow-rendoo-200/40'
+                    : 'border-border hover:border-rendoo-300 hover:shadow-sm'
+                    }`}
                 >
                   <div
-                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                      isFocused
-                        ? 'bg-rendoo-600 text-white'
-                        : 'bg-gray-100 text-gray-700'
-                    }`}
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold ${isFocused
+                      ? 'bg-rendoo-600 text-white'
+                      : 'bg-gray-100 text-gray-700'
+                      }`}
                   >
                     {t.representative.label}
                   </div>

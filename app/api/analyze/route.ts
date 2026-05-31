@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import path from 'path';
-import { generateMockAnalysis } from '@/lib/mock-data';
+
 import type { DetectedRegion } from '@/lib/parsers/room-detection';
 import type { CsvParseResult, CsvUnit } from '@/lib/parsers/csv-parse';
 import type { WallLine } from '@/types/project';
@@ -308,12 +308,7 @@ function buildAnalysisFromDxfAndCsv(
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { fileId, useMock, forceRefresh, csvFileId } = body;
-
-  // Mock mode -- no API call
-  if (useMock) {
-    return NextResponse.json({ status: 'complete', analysis: generateMockAnalysis(), mock: true });
-  }
+  const { fileId, forceRefresh, csvFileId } = body;
 
   // Check cache first (unless force refresh)
   if (!forceRefresh && fileId) {
@@ -331,7 +326,7 @@ export async function POST(request: NextRequest) {
   // If we have DXF data WITH detected regions, build analysis from
   // geometry + CSV. If walls exist but no regions were found (common
   // with DWGs that have non-standard layer naming), fall through to
-  // Gemini Vision which can analyze the rendered PNG instead.
+  // gpt-5 Vision which analyzes the rendered PNG.
   if (dxfData && dxfData.walls.length > 0 && dxfData.regions.length > 0) {
     console.log(`Building analysis from DXF geometry (${dxfData.walls.length} walls, ${dxfData.regions.length} regions)`);
     const analysis = buildAnalysisFromDxfAndCsv(dxfData, csvData);
@@ -362,16 +357,40 @@ export async function POST(request: NextRequest) {
   }
 
   if (!imageBase64) {
-    console.log('No image file found -- using mock');
-    return NextResponse.json({ status: 'complete', analysis: generateMockAnalysis(), mock: true });
+    return NextResponse.json(
+      { error: 'No image file found. Upload must produce a valid PNG/image file.' },
+      { status: 400 }
+    );
   }
 
-  // === STRATEGY 1: Try Gemini first (better spatial detection) ===
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey) {
+  // === STAGE 03: Geometry Normalisation (runs BEFORE vision AI) ===
+  let geometryHints = '';
+  try {
+    const { normaliseGeometry, generateGeometryHints } = await import('@/lib/parsers/geometry-normaliser');
+
+    let wallsForGeometry: WallLine[] = [];
+    let textsForGeometry: Array<{ text: string; x?: number; y?: number }> = [];
+
+    // Use DXF geometry if available
+    if (dxfData) {
+      wallsForGeometry = dxfData.walls;
+      textsForGeometry = dxfData.texts || [];
+    }
+
+    const geometry = await normaliseGeometry(wallsForGeometry, textsForGeometry, 1000, 1400);
+    geometryHints = generateGeometryHints(geometry);
+    console.log(`Geometry normalisation complete: ${geometry.walls.length} walls, ${geometry.doors.length} doors, ${geometry.windows.length} windows`);
+  } catch (err) {
+    console.warn('Geometry normalisation failed (non-blocking):', err);
+  }
+
+  // === STRATEGY 1: Try gpt-5 Vision first (superior spatial detection) ===
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const openaiVisionModel = process.env.OPENAI_VISION_MODEL || 'gpt-5';
+  if (openaiKey) {
     try {
-      console.log('Attempting Gemini-based analysis...');
-      const { analyzeWithGemini } = await import('@/lib/ai/gemini-detection');
+      console.log('Attempting gpt-5 Vision-based analysis...');
+      const { analyzeWithGPT4 } = await import('@/lib/ai/gpt4-detection');
 
       // Load training examples for few-shot learning
       let trainingExamples: import('@/lib/ai/prompts').TrainingExample[] = [];
@@ -379,11 +398,11 @@ export async function POST(request: NextRequest) {
         const trainingPath = path.join(process.cwd(), 'uploads', 'training', 'examples.json');
         const trainingData = await readFile(trainingPath, 'utf-8');
         trainingExamples = JSON.parse(trainingData);
-        console.log(`Loaded ${trainingExamples.length} training examples for Gemini`);
+        console.log(`Loaded ${trainingExamples.length} training examples for gpt-5`);
       } catch { /* no training data yet */ }
 
       // If we have DXF/DWG-extracted text labels, pass them as a hint
-      // so Gemini knows what unit names to look for even when the image
+      // so gpt-5 knows what unit names to look for even when the image
       // is hard to read.
       let textHint = '';
       if (dxfData && dxfData.texts && dxfData.texts.length > 0) {
@@ -397,21 +416,43 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const geminiAnalysis = await analyzeWithGemini(imageBase64, geminiKey, trainingExamples, textHint);
+      // Add geometry hints from Stage 03
+      if (geometryHints) {
+        textHint += geometryHints;
+      }
+
+      let gpt4Analysis = await analyzeWithGPT4(imageBase64, openaiKey, trainingExamples, textHint);
+
+      // Treat empty detections as a failed pass so we can retry once.
+      if (!gpt4Analysis.units || gpt4Analysis.units.length === 0) {
+        const retryHint = `${textHint}\n\nBELANGRIJK: je vorige antwoord had 0 units. Er zijn duidelijk appartementen zichtbaar in deze tekening. Probeer opnieuw en geef een volledige JSON met alle zichtbare wooneenheden. Gebruik geen lege units-array.`;
+        gpt4Analysis = await analyzeWithGPT4(imageBase64, openaiKey, trainingExamples, retryHint);
+      }
+
+      if (!gpt4Analysis.units || gpt4Analysis.units.length === 0) {
+        return NextResponse.json(
+          {
+            error: 'gpt-5 returned 0 units after retry. No fallback will be used. Controleer de inputtekening of probeer een andere bron.',
+            source: 'gpt4_vision',
+            aiModel: openaiVisionModel,
+          },
+          { status: 422 }
+        );
+      }
 
       // Auto-fix self-intersecting (bowtie) polygons — vision models
       // routinely return points in zigzag order producing X-shaped
       // outlines that aren't real apartments.
-      fixBowtiePolygons(geminiAnalysis.units);
+      fixBowtiePolygons(gpt4Analysis.units);
 
       // Heuristic mirror pairing — fixes the common case where vision
       // models classify both halves of a B2/B3 pair as hoofdtype.
       // Runs BEFORE CSV so that CSV (source of truth) can still override.
-      applyMirrorPairing(geminiAnalysis.units);
+      applyMirrorPairing(gpt4Analysis.units);
 
       // Apply CSV classifications if available
       if (csvData && csvData.units.length > 0) {
-        for (const unit of geminiAnalysis.units) {
+        for (const unit of gpt4Analysis.units) {
           const csvUnit = csvData.units.find(c => c.bouwnummer === unit.label);
           if (csvUnit) {
             unit.typeGroup = csvUnit.hoofdtype;
@@ -423,12 +464,16 @@ export async function POST(request: NextRequest) {
       }
 
       // Refresh the mirroredTypes summary after pairing
-      geminiAnalysis.mirroredTypes = geminiAnalysis.units.filter(
+      gpt4Analysis.mirroredTypes = gpt4Analysis.units.filter(
         (u) => u.isMirrored
       ).length;
 
+      gpt4Analysis.source = 'gpt4_vision';
+      gpt4Analysis.aiModel = openaiVisionModel;
+      gpt4Analysis.pipelineStatus = 'complete';
+
       // Cache
-      if (fileId) await cacheAnalysis(fileId, geminiAnalysis);
+      if (fileId) await cacheAnalysis(fileId, gpt4Analysis);
 
       // Also extract wall lines from PDF for the editor overlay
       let pdfWalls: WallLine[] = [];
@@ -445,164 +490,30 @@ export async function POST(request: NextRequest) {
         }));
       } catch { /* no PDF walls */ }
 
-      console.log(`Gemini detected ${geminiAnalysis.totalUnits} units`);
+      console.log(`gpt-5 detected ${gpt4Analysis.totalUnits} units`);
       return NextResponse.json({
         status: 'complete',
-        analysis: geminiAnalysis,
+        analysis: gpt4Analysis,
         mock: false,
-        source: 'gemini',
+        source: 'gpt4_vision',
+        aiModel: openaiVisionModel,
         dxfWalls: pdfWalls.length > 0 ? pdfWalls : undefined,
       });
-    } catch (geminiErr) {
-      console.error('Gemini analysis failed, falling back to Claude:', geminiErr);
+    } catch (gpt4Err) {
+      console.error('gpt-5 Vision analysis failed:', gpt4Err);
+      return NextResponse.json(
+        {
+          error: `gpt-5 Vision analysis failed: ${gpt4Err instanceof Error ? gpt4Err.message : 'Unknown error'}`,
+          source: 'gpt4_vision',
+          aiModel: openaiVisionModel,
+        },
+        { status: 500 }
+      );
     }
   }
 
-  // === STRATEGY 2: Claude Vision fallback ===
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    console.log('No API keys available -- using mock analysis');
-    return NextResponse.json({ status: 'complete', analysis: generateMockAnalysis(), mock: true });
-  }
-
-  try {
-    // Try to extract wall lines from PDF
-    let wallLinesPercent: { x1: number; y1: number; x2: number; y2: number; width: number }[] = [];
-    try {
-      const { extractPdfGeometry } = await import('@/lib/parsers/pdf-extract');
-      const pdfPath = path.join(uploadsDir, `${fileId}.pdf`);
-      const extraction = await extractPdfGeometry(pdfPath);
-      wallLinesPercent = extraction.wallLines.map(l => ({
-        x1: (l.x1 / extraction.width) * 100,
-        y1: (l.y1 / extraction.height) * 100,
-        x2: (l.x2 / extraction.width) * 100,
-        y2: (l.y2 / extraction.height) * 100,
-        width: l.width,
-      }));
-    } catch { /* no PDF walls */ }
-
-    // Label detection + wall-based polygons
-    const { detectLabels, generatePolygonsFromLabelsAndWalls } = await import('@/lib/ai/label-detection');
-    let labelPolygons: { label: string; polygon: { x: number; y: number }[] }[] = [];
-    try {
-      const labelResult = await detectLabels(imageBase64, apiKey);
-      if (labelResult.labels.length > 0 && wallLinesPercent.length > 0) {
-        labelPolygons = generatePolygonsFromLabelsAndWalls(labelResult.labels, wallLinesPercent);
-      }
-    } catch { /* label detection failed */ }
-
-    // Full Claude analysis
-    const { buildAnalysisPrompt } = await import('@/lib/ai/prompts');
-
-    // Load training examples for few-shot learning
-    let trainingExamples: import('@/lib/ai/prompts').TrainingExample[] = [];
-    try {
-      const trainingPath = path.join(process.cwd(), 'uploads', 'training', 'examples.json');
-      const trainingData = await readFile(trainingPath, 'utf-8');
-      trainingExamples = JSON.parse(trainingData);
-      console.log(`Loaded ${trainingExamples.length} training examples for few-shot learning`);
-    } catch { /* no training data yet */ }
-
-    const prompt = buildAnalysisPrompt(trainingExamples);
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 8192,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imageBase64 } },
-            { type: 'text', text: prompt },
-          ],
-        }],
-      }),
-    });
-
-    if (!response.ok) {
-      console.error('Claude API error:', response.status);
-      return NextResponse.json({ status: 'complete', analysis: generateMockAnalysis(), mock: true });
-    }
-
-    const result = await response.json();
-    const textBlock = result.content?.find((b: { type: string }) => b.type === 'text');
-    if (!textBlock) {
-      return NextResponse.json({ status: 'complete', analysis: generateMockAnalysis(), mock: true });
-    }
-
-    let jsonStr = textBlock.text;
-    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) jsonStr = jsonMatch[1];
-    const jsonObjMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (jsonObjMatch) jsonStr = jsonObjMatch[0];
-
-    const analysis = JSON.parse(jsonStr.trim());
-
-    // Post-process: apply CSV data if available, clamp coordinates
-    if (analysis.units && Array.isArray(analysis.units)) {
-      for (const unit of analysis.units) {
-        // If we have wall-based polygons, prefer those over AI-estimated ones
-        if (labelPolygons.length > 0) {
-          const wallPoly = labelPolygons.find(lp => lp.label === unit.label);
-          if (wallPoly) {
-            unit.polygon = wallPoly.polygon;
-          }
-        }
-
-        if (unit.polygon) {
-          unit.polygon = unit.polygon.map((p: { x: number; y: number }) => ({
-            x: Math.max(0, Math.min(100, p.x)),
-            y: Math.max(0, Math.min(100, p.y)),
-          }));
-        }
-        if (!unit.classification) {
-          unit.classification = unit.isMirrored ? 'gespiegeld' : unit.variantOf ? 'variant' : 'hoofdtype';
-        }
-      }
-
-      // Auto-fix self-intersecting (bowtie) polygons before any
-      // downstream processing. Same reason as the Gemini branch.
-      fixBowtiePolygons(analysis.units);
-
-      // Heuristic mirror pairing (runs before CSV overrides)
-      applyMirrorPairing(analysis.units);
-
-      // Now apply CSV classifications if available — CSV is source of truth
-      if (csvData) {
-        for (const unit of analysis.units) {
-          const csvUnit = csvData.units.find(u => u.bouwnummer === unit.label);
-          if (csvUnit) {
-            unit.typeGroup = csvUnit.hoofdtype;
-            unit.classification = csvUnit.classification;
-            unit.isMirrored = csvUnit.classification === 'gespiegeld';
-            if (csvUnit.classification === 'gespiegeld') {
-              unit.mirrorOf = csvUnit.hoofdtype;
-            }
-          }
-        }
-      }
-
-      // Refresh summary
-      analysis.mirroredTypes = analysis.units.filter(
-        (u: { isMirrored?: boolean }) => u.isMirrored
-      ).length;
-    }
-
-    // Cache the result
-    if (fileId) {
-      await cacheAnalysis(fileId, analysis);
-      console.log(`Cached analysis for ${fileId}`);
-    }
-
-    return NextResponse.json({ status: 'complete', analysis, mock: false });
-  } catch (error) {
-    console.error('Analysis error:', error);
-    return NextResponse.json({ status: 'complete', analysis: generateMockAnalysis(), mock: true });
-  }
+  return NextResponse.json(
+    { error: 'No API keys configured for gpt-5 Vision. Set OPENAI_API_KEY in .env.local' },
+    { status: 500 }
+  );
 }

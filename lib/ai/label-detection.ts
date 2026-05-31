@@ -40,6 +40,7 @@ Geef ALLEEN geldig JSON terug:
 Geen uitleg, alleen JSON.`;
 
 export async function detectLabels(imageBase64: string, apiKey: string): Promise<LabelDetectionResult> {
+  const anthropicVisionModel = process.env.ANTHROPIC_VISION_MODEL || 'claude-sonnet-4-20250514';
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -48,7 +49,7 @@ export async function detectLabels(imageBase64: string, apiKey: string): Promise
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: anthropicVisionModel,
       max_tokens: 2048,
       messages: [
         {

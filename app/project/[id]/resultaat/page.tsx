@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useProjectStore } from '@/stores/project-store';
 import { findExample } from '@/lib/style-examples';
-import { generateMockAnalysis } from '@/lib/mock-data';
 import PlanRenderer, { type PlanRendererHandle } from '@/components/render/PlanRenderer';
 import { parseFeedback } from '@/lib/render/parse-feedback';
 import { layoutRoomsForUnit, classifyRoom } from '@/lib/render/room-layout';
@@ -64,6 +63,8 @@ const SIZE_STEP = 0.02;
 const MIN_DIM = 0.02;
 const MAX_DIM = 0.6;
 
+type ExportFormat = 'png' | 'svg' | 'pdf';
+
 type ShapeKind = AnnotationShape['kind'];
 
 /**
@@ -102,6 +103,7 @@ export default function ResultaatPage() {
   const [generating, setGenerating] = useState(false);
   const [version, setVersion] = useState(1);
   const [activeTypeGroup, setActiveTypeGroup] = useState<string | null>(null);
+  const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
 
   const imageBoxRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<PlanRendererHandle>(null);
@@ -120,19 +122,15 @@ export default function ResultaatPage() {
     () => (project ? findExample(project.outputType, project.exampleId) : undefined),
     [project]
   );
-
-  if (!project) return null;
-
-  // Pick the unit to render. Prefer the real analysis if it's there;
-  // otherwise fall back to mock data so the renderer always has
-  // something meaningful to draw.
-  const analysis = project.analysis ?? generateMockAnalysis();
+  const analysis = project?.analysis ?? null;
+  const projectName = project?.name ?? 'floorplan';
+  const projectOutputType = project?.outputType ?? '2d-basic';
 
   // Reduce to UNIQUE woningtypes — one representative per typeGroup.
   // Mirrors and variants are visually almost identical to their
   // hoofdtype, so we don't show them as separate cards. The user only
   // needs to confirm/edit each unique layout once.
-  const uniqueTypes = pickUniqueTypes(analysis.units);
+  const uniqueTypes = analysis ? pickUniqueTypes(analysis.units) : [];
 
   // Determine which type the user is currently looking at
   const currentTypeGroup =
@@ -142,9 +140,11 @@ export default function ResultaatPage() {
     uniqueTypes[0] ??
     null;
 
-  const feedbackCount = project.feedback.length;
+  const feedbackCount = project?.feedback.length ?? 0;
   const feedbackLeft = MAX_FEEDBACK - feedbackCount;
   const isLocked = feedbackLeft <= 0;
+  const analysisSource = analysis?.source ?? 'gpt4_vision';
+  const analysisModel = analysis?.aiModel ?? 'gpt-5';
 
   /* ---------------- Annotation handling ---------------- */
 
@@ -392,6 +392,66 @@ export default function ResultaatPage() {
     alert('Top — we sturen je het eindresultaat door.');
   };
 
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExport = async (format: ExportFormat) => {
+    if (!renderUnit) return;
+    setExportingFormat(format);
+    try {
+      if (format === 'png') {
+        const pngDataUrl = rendererRef.current?.toDataURL();
+        if (!pngDataUrl) throw new Error('PNG render not ready');
+        const response = await fetch(pngDataUrl);
+        const blob = await response.blob();
+        downloadBlob(blob, `${projectName}-${renderUnit.typeGroup}.png`);
+        return;
+      }
+
+      const response = await fetch('/api/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          drawing: {
+            units: [renderUnit],
+            width: 1200,
+            height: 1600,
+          },
+          options: {
+            format,
+            watermark: { text: projectName, opacity: 0.18 },
+            mood: projectOutputType === '2d-luxe' ? 'luxe' : 'basic',
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Export failed (${response.status})`);
+      }
+
+      if (format === 'svg') {
+        const text = await response.text();
+        downloadBlob(new Blob([text], { type: 'image/svg+xml' }), `${projectName}-${renderUnit.typeGroup}.svg`);
+      } else {
+        const blob = await response.blob();
+        downloadBlob(blob, `${projectName}-${renderUnit.typeGroup}.pdf`);
+      }
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert(`Export mislukt voor ${format.toUpperCase()}. Probeer opnieuw.`);
+    } finally {
+      setExportingFormat(null);
+    }
+  };
+
   /**
    * Compute the rooms that the annotation overlaps. We pass these as
    * extra context to the Claude fallback so it knows whether the user
@@ -409,17 +469,17 @@ export default function ResultaatPage() {
     const rect =
       shape.kind === 'circle'
         ? {
-            x: (shape.cx - shape.r) * 100,
-            y: (shape.cy - shape.r) * 100,
-            w: shape.r * 200,
-            h: shape.r * 200,
-          }
+          x: (shape.cx - shape.r) * 100,
+          y: (shape.cy - shape.r) * 100,
+          w: shape.r * 200,
+          h: shape.r * 200,
+        }
         : {
-            x: (shape.cx - shape.w / 2) * 100,
-            y: (shape.cy - shape.h / 2) * 100,
-            w: shape.w * 100,
-            h: shape.h * 100,
-          };
+          x: (shape.cx - shape.w / 2) * 100,
+          y: (shape.cy - shape.h / 2) * 100,
+          w: shape.w * 100,
+          h: shape.h * 100,
+        };
 
     return layout
       .filter((room) => {
@@ -434,6 +494,18 @@ export default function ResultaatPage() {
         label: room.source.label,
         kind: classifyRoom(room.source),
       }));
+  }
+
+  if (!project) return null;
+  if (!analysis) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-red-600 text-lg">
+          <p className="font-bold">No analysis data available</p>
+          <p className="text-sm mt-2">Run the analysis pipeline first in the validation page</p>
+        </div>
+      </div>
+    );
   }
 
   /* ---------------- Render ---------------- */
@@ -458,6 +530,10 @@ export default function ResultaatPage() {
                 ? 'Nog geen feedback-rondes gebruikt'
                 : `${feedbackCount} van ${MAX_FEEDBACK} feedback-rondes gebruikt`}
             </p>
+            <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              Pipeline: {analysisSource} · model: {analysisModel}
+            </div>
           </div>
           <button
             type="button"
@@ -486,11 +562,10 @@ export default function ResultaatPage() {
                       setActiveTypeGroup(u.typeGroup);
                       setAnnotation(null);
                     }}
-                    className={`group relative flex items-center gap-2 whitespace-nowrap rounded-t-lg px-4 py-2.5 text-xs font-medium transition-colors ${
-                      isActive
-                        ? 'border-b-2 border-rendoo-600 bg-rendoo-50/60 text-rendoo-700'
-                        : 'border-b-2 border-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-800'
-                    }`}
+                    className={`group relative flex items-center gap-2 whitespace-nowrap rounded-t-lg px-4 py-2.5 text-xs font-medium transition-colors ${isActive
+                      ? 'border-b-2 border-rendoo-600 bg-rendoo-50/60 text-rendoo-700'
+                      : 'border-b-2 border-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-800'
+                      }`}
                   >
                     <span className="font-semibold">{u.typeGroup}</span>
                     <span className="text-[10px] text-gray-400">
@@ -645,11 +720,10 @@ export default function ResultaatPage() {
                   <button
                     type="button"
                     onClick={() => handleShapeKindChange('circle')}
-                    className={`flex items-center gap-1 px-2.5 py-1 font-medium transition-colors ${
-                      shapeKind === 'circle'
-                        ? 'bg-rendoo-600 text-white'
-                        : 'text-gray-600 hover:bg-gray-50'
-                    }`}
+                    className={`flex items-center gap-1 px-2.5 py-1 font-medium transition-colors ${shapeKind === 'circle'
+                      ? 'bg-rendoo-600 text-white'
+                      : 'text-gray-600 hover:bg-gray-50'
+                      }`}
                     aria-pressed={shapeKind === 'circle'}
                     title="Cirkelvormig"
                   >
@@ -661,11 +735,10 @@ export default function ResultaatPage() {
                   <button
                     type="button"
                     onClick={() => handleShapeKindChange('rect')}
-                    className={`flex items-center gap-1 border-l border-border px-2.5 py-1 font-medium transition-colors ${
-                      shapeKind === 'rect'
-                        ? 'bg-rendoo-600 text-white'
-                        : 'text-gray-600 hover:bg-gray-50'
-                    }`}
+                    className={`flex items-center gap-1 border-l border-border px-2.5 py-1 font-medium transition-colors ${shapeKind === 'rect'
+                      ? 'bg-rendoo-600 text-white'
+                      : 'text-gray-600 hover:bg-gray-50'
+                      }`}
                     aria-pressed={shapeKind === 'rect'}
                     title="Rechthoekig"
                   >
@@ -717,6 +790,26 @@ export default function ResultaatPage() {
 
           {/* Sidebar */}
           <aside className="space-y-4">
+            <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+              <h2 className="text-sm font-semibold text-gray-900">Export</h2>
+              <p className="mt-1 text-[11px] text-gray-500">
+                Download de huidige woningtype-weergave als PNG, SVG of PDF.
+              </p>
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                {(['png', 'svg', 'pdf'] as const).map((format) => (
+                  <button
+                    key={format}
+                    type="button"
+                    onClick={() => handleExport(format)}
+                    disabled={exportingFormat !== null}
+                    className="rounded-full border border-rendoo-200 bg-white px-3 py-2 text-xs font-semibold text-rendoo-700 transition-colors hover:bg-rendoo-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {exportingFormat === format ? 'Bezig…' : format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Feedback form */}
             <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between">
@@ -724,13 +817,12 @@ export default function ResultaatPage() {
                   Feedback voor versie {version + 1}
                 </h2>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                    feedbackLeft > 2
-                      ? 'bg-rendoo-100 text-rendoo-700'
-                      : feedbackLeft > 0
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${feedbackLeft > 2
+                    ? 'bg-rendoo-100 text-rendoo-700'
+                    : feedbackLeft > 0
                       ? 'bg-amber-100 text-amber-700'
                       : 'bg-red-100 text-red-700'
-                  }`}
+                    }`}
                 >
                   {feedbackLeft} rondes over
                 </span>

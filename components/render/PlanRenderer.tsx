@@ -335,8 +335,6 @@ function paintRasterMode(
 
   const imgW = image.naturalWidth;
   const imgH = image.naturalHeight;
-  const sx = (cropMinX / 100) * imgW;
-  const sy = (cropMinY / 100) * imgH;
   const sw = ((cropMaxX - cropMinX) / 100) * imgW;
   const sh = ((cropMaxY - cropMinY) / 100) * imgH;
 
@@ -364,10 +362,36 @@ function paintRasterMode(
   const dx = (cw - dw) / 2;
   const dy = (ch - dh) / 2;
 
+  // If the detected unit is extremely narrow/tall, pad the crop so the
+  // result still shows surrounding context instead of collapsing to a strip.
+  const minVisibleAspect = 0.65;
+  const maxVisibleAspect = 1.55;
+  let padLeft = cropMinX;
+  let padRight = cropMaxX;
+  let padTop = cropMinY;
+  let padBottom = cropMaxY;
+  const currentAspect = sw / sh;
+  if (currentAspect < minVisibleAspect) {
+    const targetWidth = sh * minVisibleAspect;
+    const extra = Math.max(0, targetWidth - sw);
+    padLeft = Math.max(0, cropMinX - extra / 2);
+    padRight = Math.min(100, cropMaxX + extra / 2);
+  } else if (currentAspect > maxVisibleAspect) {
+    const targetHeight = sw / maxVisibleAspect;
+    const extra = Math.max(0, targetHeight - sh);
+    padTop = Math.max(0, cropMinY - extra / 2);
+    padBottom = Math.min(100, cropMaxY + extra / 2);
+  }
+
+  const paddedSx = (padLeft / 100) * imgW;
+  const paddedSy = (padTop / 100) * imgH;
+  const paddedSw = ((padRight - padLeft) / 100) * imgW;
+  const paddedSh = ((padBottom - padTop) / 100) * imgH;
+
   // Helper: convert polygon point (0..100 of source image) → canvas px
   const polyToCanvas = (p: { x: number; y: number }) => ({
-    x: dx + ((p.x - cropMinX) / (cropMaxX - cropMinX)) * dw,
-    y: dy + ((p.y - cropMinY) / (cropMaxY - cropMinY)) * dh,
+    x: dx + ((p.x - padLeft) / (padRight - padLeft)) * dw,
+    y: dy + ((p.y - padTop) / (padBottom - padTop)) * dh,
   });
 
   // 3. Build the polygon clip path so we ONLY draw inside the user's
@@ -389,7 +413,7 @@ function paintRasterMode(
   if (palette.rasterFilter) {
     ctx.filter = palette.rasterFilter;
   }
-  ctx.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh);
+  ctx.drawImage(image, paddedSx, paddedSy, paddedSw, paddedSh, dx, dy, dw, dh);
   ctx.filter = 'none';
 
   // 5. Subtle multiply tint on top — pushes the palette accent further
@@ -480,7 +504,6 @@ function drawCornerNote(
   ctx.font = '600 11px "Inter", sans-serif';
   const tw = ctx.measureText(text).width;
   const padX = 7;
-  const padY = 4;
   const bw = tw + padX * 2 + 12;
   const bh = 18;
   const bx = x - bw;
@@ -558,8 +581,8 @@ function drawUnitBadge(
     cls === 'gespiegeld'
       ? mix(palette.accentColor, '#ffffff', 0.4)
       : cls === 'variant'
-      ? mix(palette.accentColor, '#ffffff', 0.2)
-      : palette.wallColor;
+        ? mix(palette.accentColor, '#ffffff', 0.2)
+        : palette.wallColor;
   ctx.fill();
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 1.5;

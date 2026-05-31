@@ -361,7 +361,7 @@ export type DwgRenderResult =
  * swapping white → black (and inverting near-white colors) so the
  * output looks correct on a white page.
  *
- * This PNG is the "raster image" that Gemini Vision analyzes to
+ * This PNG is the "raster image" that gpt-5 Vision (OpenAI) analyzes to
  * detect units — same role as the pdftoppm-rendered PNG for PDFs.
  */
 export async function renderDwgToPng(

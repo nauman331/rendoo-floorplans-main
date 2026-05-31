@@ -15,7 +15,7 @@ import { detectRooms, groupRoomsIntoUnits } from '@/lib/parsers/room-detection';
  *  - PDF: rasterized to PNG via lib/conversion/pdf-to-png.ts (poppler
  *    via pdftoppm — handles complex multi-page / vector / image PDFs
  *    where the old qlmanage path failed). The PNG is what the
- *    /api/analyze pipeline reads via Gemini Vision.
+ *    /api/analyze pipeline reads via gpt-5 Vision.
  *
  *  - DWG: converted to DXF via lib/conversion/dwg-to-dxf.ts (LibreDWG
  *    or ODA File Converter, whichever is available). The resulting
@@ -87,9 +87,9 @@ export async function POST(request: NextRequest) {
     //   geometry-based detection when enough walls are found.
     //
     // Track 2: Rasterization — render the DWG to a PNG via SVG so
-    //   the analyze pipeline can fall back to Gemini Vision when
-    //   geometry-based detection comes up short (which is common for
-    //   DWGs with complex layer naming).
+    //   the analyze pipeline can run gpt-5 Vision (OpenAI) on the
+    //   rendered image when geometry-based detection comes up short
+    //   (which is common for DWGs with complex layer naming).
     //
     // Both tracks run; the analyze pipeline picks the best source.
 
@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
       console.warn('[upload] DWG geometry extraction failed (non-fatal):', parseResult);
     }
 
-    // Track 2 — rasterization (DWG → SVG → PNG for Gemini Vision)
+    // Track 2 — rasterization (DWG → SVG → PNG for gpt-5 Vision)
     const pngFileName = `${fileId}.png`;
     const pngPath = path.join(uploadsDir, pngFileName);
     const renderResult = await renderDwgToPng(filePath, pngPath);

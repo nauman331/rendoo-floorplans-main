@@ -19,7 +19,7 @@ pip3 install Pillow
 
 # API keys
 cp .env.local.example .env.local
-# Set ANTHROPIC_API_KEY + GEMINI_API_KEY
+# Set OPENAI_API_KEY + ANTHROPIC_API_KEY
 
 npm run dev
 # http://localhost:3000
@@ -29,13 +29,13 @@ npm run dev
 
 - `app/nieuw/page.tsx` — start of the user flow
 - `app/api/upload/route.ts` — multi-format upload pipeline
-- `app/api/analyze/route.ts` — Gemini Vision unit detection
+- `app/api/analyze/route.ts` — gpt-5 Vision unit detection with Claude fallback
 - `components/render/PlanRenderer.tsx` — canvas renderer
 - `lib/render/palettes.ts` — 17 hand-tuned style palettes
 
 ## Stack
 
-Next.js 16 (App Router) · React 19 · Tailwind v4 · Zustand · Anthropic SDK (Claude Opus 4.6) · Gemini 2.5 Pro Vision · `@mlightcad/libredwg-web` (WASM DWG parser) · `pdftoppm` · `rsvg-convert` · Pillow.
+Next.js 16 (App Router) · React 19 · Tailwind v4 · Zustand · OpenAI gpt-5 Vision · Anthropic Claude · `@mlightcad/libredwg-web` (WASM DWG parser) · `pdftoppm` · `rsvg-convert` · Pillow.
 
 ## Important notes for AI agents working on this code
 

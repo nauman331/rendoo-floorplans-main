@@ -124,6 +124,10 @@ export interface FloorplanAnalysis {
   mirroredTypes: number;
   floors: FloorInfo[];
   units: DetectedUnit[];
+  source?: 'gpt4_vision';
+  aiModel?: string;
+  pipelineStatus?: 'complete' | 'error';
+  pipelineError?: string;
 }
 
 export interface FloorInfo {
@@ -204,4 +208,47 @@ export interface PlacedFurniture extends FurnitureItem {
   y: number;
   rotation: number;
   scale: number;
+}
+
+/**
+ * Correction log — every human edit made in PlanCanvas.
+ * Non-negotiable for V2 ML training dataset.
+ * Structured tracking of operator corrections (geometry, classification, furniture).
+ */
+export interface CorrectionLog {
+  id: string;
+  projectId: string;
+  fileId: string;
+  correctionType: 'polygon_edit' | 'unit_classification' | 'furniture_placement';
+  unitId: string;
+  beforePolygon: Point[] | null;
+  afterPolygon: Point[] | null;
+  beforeClassification: string | null;
+  afterClassification: string | null;
+  beforeArea: number | null;
+  afterArea: number | null;
+  operatorNotes: string | null;
+  aiConfidence: number | null;
+  correctionConfidence: number;
+  aiSource: string; // 'gpt4_vision' | 'geometry_normaliser' | 'claude_vision'
+  moodId: string | null;
+  inputFileType: 'dwg' | 'dxf' | 'pdf';
+  createdBy: string;
+  createdAt: Date;
+  editedAt?: Date;
+  mlLabelVerified: boolean;
+  mlLabelNotes: string | null;
+}
+
+/**
+ * Operator statistics — tracks quality metrics per operator.
+ * Used for operator performance monitoring.
+ */
+export interface OperatorStats {
+  id: string;
+  operatorName: string;
+  totalCorrections: number;
+  avgCorrectionConfidence: number;
+  correctionsPerProject: number;
+  lastActive: Date;
 }

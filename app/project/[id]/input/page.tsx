@@ -111,9 +111,7 @@ export default function InputPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id, project?.level, project?.outputType]);
 
-  if (!project) return null;
-
-  const level = project.level;
+  const level = project?.level;
 
   const getFileType = (name: string): 'dwg' | 'dxf' | 'pdf' | null => {
     const ext = name.split('.').pop()?.toLowerCase();
@@ -167,6 +165,8 @@ export default function InputPage() {
   };
 
   const canSubmit = !!file && uploadState !== 'uploading';
+
+  if (!project) return null;
 
   const handleSubmit = async () => {
     if (!canSubmit || !file) return;
@@ -287,8 +287,8 @@ export default function InputPage() {
                   {level === 'woningtype'
                     ? 'woningtype'
                     : level === 'verdieping'
-                    ? 'verdieping'
-                    : 'project'}
+                      ? 'verdieping'
+                      : 'project'}
                 </span>
               </>
             )}
@@ -312,8 +312,8 @@ export default function InputPage() {
                   {uploadError.code === 'dwg_parse_failed'
                     ? 'DWG kon niet worden ingelezen'
                     : uploadError.code === 'pdf_render_failed'
-                    ? 'Deze PDF kan niet worden gelezen'
-                    : 'Upload mislukt'}
+                      ? 'Deze PDF kan niet worden gelezen'
+                      : 'Upload mislukt'}
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-red-800">
                   {uploadError.message}
@@ -361,8 +361,8 @@ export default function InputPage() {
                 fmt === 'dxf'
                   ? dxfInputRef
                   : fmt === 'dwg'
-                  ? dwgInputRef
-                  : pdfInputRef;
+                    ? dwgInputRef
+                    : pdfInputRef;
 
               return (
                 <div
@@ -380,13 +380,12 @@ export default function InputPage() {
                     }
                   }}
                   onClick={() => inputRef.current?.click()}
-                  className={`flex cursor-pointer flex-col rounded-xl border-2 border-dashed px-3 py-3 transition-all ${
-                    isActive
+                  className={`flex cursor-pointer flex-col rounded-xl border-2 border-dashed px-3 py-3 transition-all ${isActive
                       ? 'border-rendoo-500 bg-rendoo-50 shadow-lg shadow-rendoo-200/40'
                       : isDragging
-                      ? 'border-rendoo-400 bg-rendoo-50'
-                      : 'border-gray-300 bg-white hover:border-rendoo-300 hover:bg-rendoo-50/40'
-                  }`}
+                        ? 'border-rendoo-400 bg-rendoo-50'
+                        : 'border-gray-300 bg-white hover:border-rendoo-300 hover:bg-rendoo-50/40'
+                    }`}
                 >
                   <input
                     ref={inputRef}
@@ -402,18 +401,16 @@ export default function InputPage() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span
-                        className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-bold ${
-                          isActive
+                        className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-bold ${isActive
                             ? 'bg-rendoo-600 text-white'
                             : 'bg-gray-100 text-gray-700'
-                        }`}
+                          }`}
                       >
                         {meta.title}
                       </span>
                       <span
-                        className={`text-[10px] font-medium ${
-                          isActive ? 'text-rendoo-700' : 'text-gray-500'
-                        }`}
+                        className={`text-[10px] font-medium ${isActive ? 'text-rendoo-700' : 'text-gray-500'
+                          }`}
                       >
                         {meta.tagline}
                       </span>
@@ -502,13 +499,12 @@ export default function InputPage() {
               if (e.dataTransfer.files?.[0]) handleCsvFile(e.dataTransfer.files[0]);
             }}
             onClick={() => csvInputRef.current?.click()}
-            className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed px-4 py-3 transition-colors ${
-              csvFile
+            className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed px-4 py-3 transition-colors ${csvFile
                 ? 'border-rendoo-400 bg-rendoo-50'
                 : dragCsv
-                ? 'border-rendoo-400 bg-rendoo-50'
-                : 'border-gray-300 bg-white hover:border-rendoo-300 hover:bg-rendoo-50/40'
-            }`}
+                  ? 'border-rendoo-400 bg-rendoo-50'
+                  : 'border-gray-300 bg-white hover:border-rendoo-300 hover:bg-rendoo-50/40'
+              }`}
           >
             <input
               ref={csvInputRef}
@@ -575,8 +571,8 @@ export default function InputPage() {
               {file?.name.endsWith('.dxf')
                 ? 'DXF wordt geparsed. Wandgeometrie en tekst worden geëxtraheerd voor unit-detectie.'
                 : file?.name.endsWith('.pdf')
-                ? 'PDF wordt gerenderd. Tekst en vectorlijnen worden geëxtraheerd voor unit-detectie.'
-                : 'Bestand wordt verwerkt...'}
+                  ? 'PDF wordt gerenderd. Tekst en vectorlijnen worden geëxtraheerd voor unit-detectie.'
+                  : 'Bestand wordt verwerkt...'}
             </p>
             <div className="mt-2 flex items-center gap-3">
               <span className="text-[11px] text-gray-600">
