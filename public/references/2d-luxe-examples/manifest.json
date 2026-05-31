@@ -1,0 +1,52 @@
+[
+  {
+    "id": "warm",
+    "image": "/references/2d-luxe-examples/warm.jpg",
+    "label": "Warm"
+  },
+  {
+    "id": "brown",
+    "image": "/references/2d-luxe-examples/brown.jpg",
+    "label": "Brown"
+  },
+  {
+    "id": "moody",
+    "image": "/references/2d-luxe-examples/moody.jpg",
+    "label": "Moody"
+  },
+  {
+    "id": "scandi",
+    "image": "/references/2d-luxe-examples/scandi.jpg",
+    "label": "Scandi"
+  },
+  {
+    "id": "neutral",
+    "image": "/references/2d-luxe-examples/neutral.jpg",
+    "label": "Neutral"
+  },
+  {
+    "id": "classic",
+    "image": "/references/2d-luxe-examples/classic.jpg",
+    "label": "Classic"
+  },
+  {
+    "id": "luxe",
+    "image": "/references/2d-luxe-examples/luxe.jpg",
+    "label": "Luxe"
+  },
+  {
+    "id": "rustic",
+    "image": "/references/2d-luxe-examples/rustic.jpg",
+    "label": "Rustic"
+  },
+  {
+    "id": "cosy",
+    "image": "/references/2d-luxe-examples/cosy.jpg",
+    "label": "Cosy"
+  },
+  {
+    "id": "warm-luxe",
+    "image": "/references/2d-luxe-examples/warm-luxe.jpg",
+    "label": "Warm Luxe"
+  }
+]

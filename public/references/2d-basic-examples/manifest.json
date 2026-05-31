@@ -1,0 +1,37 @@
+[
+  {
+    "id": "01-situatie",
+    "image": "/references/2d-basic-examples/01-situatie.jpg",
+    "label": "Situatietekening \u2014 groen & rustig"
+  },
+  {
+    "id": "02-type-s-flow",
+    "image": "/references/2d-basic-examples/02-type-s-flow.jpg",
+    "label": "Type S \u2014 warm & compact"
+  },
+  {
+    "id": "03-a",
+    "image": "/references/2d-basic-examples/03-a.jpg",
+    "label": "Type A \u2014 neutraal & licht"
+  },
+  {
+    "id": "04-c30301",
+    "image": "/references/2d-basic-examples/04-c30301.jpg",
+    "label": "Aardetinten \u2014 zand & olijf"
+  },
+  {
+    "id": "05-fd",
+    "image": "/references/2d-basic-examples/05-fd.jpg",
+    "label": "Strak & modern \u2014 grijs/bruin"
+  },
+  {
+    "id": "06-c2",
+    "image": "/references/2d-basic-examples/06-c2.jpg",
+    "label": "Minimalistisch \u2014 zandtint"
+  },
+  {
+    "id": "07-h4",
+    "image": "/references/2d-basic-examples/07-h4.jpg",
+    "label": "Kleurvol \u2014 blauwe accenten"
+  }
+]
