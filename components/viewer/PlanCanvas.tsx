@@ -31,12 +31,8 @@ function getUnitColor(unit: DetectedUnit): string {
   return typeColors.main;
 }
 
-function getTypeMainColor(typeGroup: string): string {
-  return (TYPE_COLORS[typeGroup] || DEFAULT_COLOR).main;
-}
 const HANDLE_RADIUS = 10;
 const MIDPOINT_RADIUS = 5;
-const WALL_SNAP_DISTANCE_PX = 8;
 
 interface PlanCanvasProps {
   imageUrl: string;
@@ -134,18 +130,6 @@ export default function PlanCanvas({
     [units, onUpdatePolygon, projectId, fileId, correctionLogger]
   );
 
-  // Load image
-  useEffect(() => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      imageRef.current = img;
-      setImageLoaded(true);
-      fitToContainer();
-    };
-    img.src = imageUrl;
-  }, [imageUrl]);
-
   // Fit image to container
   const fitToContainer = useCallback(() => {
     const container = containerRef.current;
@@ -161,6 +145,18 @@ export default function PlanCanvas({
     };
     forceRender(n => n + 1);
   }, []);
+
+  // Load image
+  useEffect(() => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      imageRef.current = img;
+      setImageLoaded(true);
+      fitToContainer();
+    };
+    img.src = imageUrl;
+  }, [imageUrl, fitToContainer]);
 
   // Resize
   useEffect(() => {
@@ -240,76 +236,6 @@ export default function PlanCanvas({
 
     return { type: 'none' };
   }, [units, selectedUnitId, pctToScreen]);
-
-  // Zoom to unit
-  const zoomToUnit = useCallback((unit: DetectedUnit) => {
-    const container = containerRef.current;
-    const img = imageRef.current;
-    if (!container || !img) return;
-
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
-    const xs = unit.polygon.map(p => (p.x / 100) * img.naturalWidth);
-    const ys = unit.polygon.map(p => (p.y / 100) * img.naturalHeight);
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const uw = maxX - minX, uh = maxY - minY;
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-
-    const pad = 2.2;
-    const newScale = Math.min(cw / (uw * pad), ch / (uh * pad), 4);
-
-    // Animate
-    const startView = { ...viewRef.current };
-    const endView = {
-      scale: newScale,
-      offsetX: cw / 2 - cx * newScale,
-      offsetY: ch / 2 - cy * newScale,
-    };
-    const duration = 300;
-    const startTime = Date.now();
-    const animate = () => {
-      const t = Math.min(1, (Date.now() - startTime) / duration);
-      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
-      viewRef.current = {
-        scale: startView.scale + (endView.scale - startView.scale) * ease,
-        offsetX: startView.offsetX + (endView.offsetX - startView.offsetX) * ease,
-        offsetY: startView.offsetY + (endView.offsetY - startView.offsetY) * ease,
-      };
-      forceRender(n => n + 1);
-      if (t < 1) requestAnimationFrame(animate);
-    };
-    requestAnimationFrame(animate);
-  }, []);
-
-  // Snap a percentage-coordinate point to the nearest wall line
-  const snapToWall = useCallback((pct: Point): Point => {
-    if (!wallLines || wallLines.length === 0) return pct;
-    const img = imageRef.current;
-    if (!img) return pct;
-
-    // Convert snap distance from screen pixels to percentage
-    const v = viewRef.current;
-    const snapPctX = (WALL_SNAP_DISTANCE_PX / (img.naturalWidth * v.scale)) * 100;
-    const snapPctY = (WALL_SNAP_DISTANCE_PX / (img.naturalHeight * v.scale)) * 100;
-
-    let bestDist = Infinity;
-    let snapped = pct;
-
-    for (const wall of wallLines) {
-      // Find closest point on the wall segment to pct
-      const cp = closestPointOnSegment(pct.x, pct.y, wall.x1, wall.y1, wall.x2, wall.y2);
-      const dx = (pct.x - cp.x) / snapPctX;
-      const dy = (pct.y - cp.y) / snapPctY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 1 && dist < bestDist) {
-        bestDist = dist;
-        snapped = cp;
-      }
-    }
-
-    return snapped;
-  }, [wallLines]);
 
   // --- Mouse handlers ---
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -677,18 +603,6 @@ function pointInPolygon(x: number, y: number, poly: [number, number][]): boolean
     }
   }
   return inside;
-}
-
-function closestPointOnSegment(
-  px: number, py: number,
-  ax: number, ay: number,
-  bx: number, by: number,
-): { x: number; y: number } {
-  const dx = bx - ax, dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq === 0) return { x: ax, y: ay };
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
-  return { x: ax + t * dx, y: ay + t * dy };
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

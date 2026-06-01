@@ -6,6 +6,7 @@ import type { DetectedRegion } from '@/lib/parsers/room-detection';
 import type { CsvParseResult, CsvUnit } from '@/lib/parsers/csv-parse';
 import type { WallLine } from '@/types/project';
 import type { TextLabel } from '@/lib/parsers/dxf-parse';
+import type { PdfExtraction } from '@/lib/parsers/pdf-extract';
 
 const CACHE_DIR = path.join(process.cwd(), 'uploads', 'cache');
 
@@ -39,6 +40,13 @@ async function loadDxfData(fileId: string): Promise<DxfCacheData | null> {
 async function loadCsvData(csvFileId: string): Promise<CsvParseResult | null> {
   try {
     const data = await readFile(path.join(CACHE_DIR, `${csvFileId}-csv.json`), 'utf-8');
+    return JSON.parse(data);
+  } catch { return null; }
+}
+
+async function loadPdfData(fileId: string): Promise<PdfExtraction | null> {
+  try {
+    const data = await readFile(path.join(CACHE_DIR, `${fileId}-pdf.json`), 'utf-8');
     return JSON.parse(data);
   } catch { return null; }
 }
@@ -343,19 +351,38 @@ export async function POST(request: NextRequest) {
 
   // === STAGE 03: Geometry Normalisation (runs BEFORE vision AI) ===
   let geometryHints = '';
+  let pdfExtraction: PdfExtraction | null = null;
   try {
     const { normaliseGeometry, generateGeometryHints } = await import('@/lib/parsers/geometry-normaliser');
 
     let wallsForGeometry: WallLine[] = [];
     let textsForGeometry: Array<{ text: string; x?: number; y?: number }> = [];
+    let geometryImageWidth = 100;
+    let geometryImageHeight = 100;
 
     // Use DXF geometry if available
     if (dxfData) {
       wallsForGeometry = dxfData.walls;
       textsForGeometry = dxfData.texts || [];
+      geometryImageWidth = 100;
+      geometryImageHeight = 100;
     }
 
-    const geometry = await normaliseGeometry(wallsForGeometry, textsForGeometry, 1000, 1400);
+    // Fall back to cached PDF geometry when no DXF data exists
+    pdfExtraction = dxfData ? null : fileId ? await loadPdfData(fileId) : null;
+    if (!dxfData && pdfExtraction) {
+      wallsForGeometry = pdfExtraction.wallLines;
+      textsForGeometry = pdfExtraction.texts || [];
+      geometryImageWidth = pdfExtraction.width;
+      geometryImageHeight = pdfExtraction.height;
+    }
+
+    const geometry = await normaliseGeometry(
+      wallsForGeometry,
+      textsForGeometry,
+      geometryImageWidth,
+      geometryImageHeight
+    );
     geometryHints = generateGeometryHints(geometry);
     console.log(`Geometry normalisation complete: ${geometry.walls.length} walls, ${geometry.doors.length} doors, ${geometry.windows.length} windows`);
   } catch (err) {
@@ -365,6 +392,19 @@ export async function POST(request: NextRequest) {
   // === STRATEGY 1: Try gpt-5 Vision first (superior spatial detection) ===
   const openaiKey = process.env.OPENAI_API_KEY;
   const openaiVisionModel = process.env.OPENAI_VISION_MODEL || 'gpt-5';
+
+  const overlayWalls: WallLine[] = dxfData?.walls?.length
+    ? dxfData.walls
+    : pdfExtraction?.wallLines?.length
+      ? pdfExtraction.wallLines.map((l) => ({
+        x1: (l.x1 / pdfExtraction.width) * 100,
+        y1: (l.y1 / pdfExtraction.height) * 100,
+        x2: (l.x2 / pdfExtraction.width) * 100,
+        y2: (l.y2 / pdfExtraction.height) * 100,
+        width: l.width,
+      }))
+      : [];
+
   if (openaiKey) {
     try {
       console.log('Attempting gpt-5 Vision-based analysis...');
@@ -453,21 +493,6 @@ export async function POST(request: NextRequest) {
       // Cache
       if (fileId) await cacheAnalysis(fileId, gpt4Analysis);
 
-      // Also extract wall lines from PDF for the editor overlay
-      let pdfWalls: WallLine[] = [];
-      try {
-        const { extractPdfGeometry } = await import('@/lib/parsers/pdf-extract');
-        const pdfPath = path.join(uploadsDir, `${fileId}.pdf`);
-        const extraction = await extractPdfGeometry(pdfPath);
-        pdfWalls = extraction.wallLines.map(l => ({
-          x1: (l.x1 / extraction.width) * 100,
-          y1: (l.y1 / extraction.height) * 100,
-          x2: (l.x2 / extraction.width) * 100,
-          y2: (l.y2 / extraction.height) * 100,
-          width: l.width,
-        }));
-      } catch { /* no PDF walls */ }
-
       console.log(`gpt-5 detected ${gpt4Analysis.totalUnits} units`);
       return NextResponse.json({
         status: 'complete',
@@ -475,10 +500,23 @@ export async function POST(request: NextRequest) {
         mock: false,
         source: 'gpt4_vision',
         aiModel: openaiVisionModel,
-        dxfWalls: pdfWalls.length > 0 ? pdfWalls : undefined,
+        dxfWalls: overlayWalls.length > 0 ? overlayWalls : undefined,
       });
     } catch (gpt4Err) {
       console.error('gpt-5 Vision analysis failed:', gpt4Err);
+      if (dxfData) {
+        const fallbackAnalysis = buildAnalysisFromDxfAndCsv(dxfData, csvData);
+        if (fileId) await cacheAnalysis(fileId, fallbackAnalysis);
+        return NextResponse.json({
+          status: 'complete',
+          analysis: fallbackAnalysis,
+          mock: false,
+          source: 'dxf_csv_fallback',
+          aiModel: 'dxf_csv',
+          fallbackReason: String(gpt4Err instanceof Error ? gpt4Err.message : gpt4Err),
+          dxfWalls: overlayWalls.length > 0 ? overlayWalls : undefined,
+        });
+      }
       return NextResponse.json(
         {
           error: `gpt-5 Vision analysis failed: ${gpt4Err instanceof Error ? gpt4Err.message : 'Unknown error'}`,
@@ -488,6 +526,19 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+  }
+
+  if (dxfData) {
+    const fallbackAnalysis = buildAnalysisFromDxfAndCsv(dxfData, csvData);
+    if (fileId) await cacheAnalysis(fileId, fallbackAnalysis);
+    return NextResponse.json({
+      status: 'complete',
+      analysis: fallbackAnalysis,
+      mock: false,
+      source: 'dxf_csv_fallback',
+      aiModel: 'dxf_csv',
+      dxfWalls: overlayWalls.length > 0 ? overlayWalls : undefined,
+    });
   }
 
   return NextResponse.json(

@@ -87,13 +87,22 @@ export function normaliseWalls(
 ): NormalisedWall[] {
     if (!rawWalls || rawWalls.length === 0) return [];
 
+    const wallsUsePercent = rawWalls.every((wall) =>
+        [wall.x1, wall.y1, wall.x2, wall.y2].every(
+            (coord) => coord >= 0 && coord <= 100
+        )
+    );
+
+    const xScale = wallsUsePercent ? 1 : imageWidth > 0 ? 100 / imageWidth : 1;
+    const yScale = wallsUsePercent ? 1 : imageHeight > 0 ? 100 / imageHeight : 1;
+
     return rawWalls.map((wall, idx) => ({
         id: `wall-${idx}`,
         type: detectWallType(wall),
-        x1: (wall.x1 / imageWidth) * 100,
-        y1: (wall.y1 / imageHeight) * 100,
-        x2: (wall.x2 / imageWidth) * 100,
-        y2: (wall.y2 / imageHeight) * 100,
+        x1: wall.x1 * xScale,
+        y1: wall.y1 * yScale,
+        x2: wall.x2 * xScale,
+        y2: wall.y2 * yScale,
         thickness: wall.width || 0.1, // in percentage units if unknown
         confidence: 0.85, // DXF geometry is usually reliable
     }));
@@ -251,12 +260,22 @@ export async function normaliseGeometry(
     const normalisedWalls = normaliseWalls(walls, imageWidth, imageHeight);
 
     // Extract text-based hints
+    const textsUsePercent = texts.every(
+        (t) =>
+            t.x !== undefined &&
+            t.y !== undefined &&
+            t.x >= 0 &&
+            t.x <= 100 &&
+            t.y >= 0 &&
+            t.y <= 100
+    );
+
     const textsWithCoords = texts
         .filter((t): t is typeof t & { x: number; y: number } => t.x !== undefined && t.y !== undefined)
         .map(t => ({
             text: t.text || '',
-            x: ((t.x || 0) / imageWidth) * 100,
-            y: ((t.y || 0) / imageHeight) * 100,
+            x: textsUsePercent ? t.x : ((t.x || 0) / imageWidth) * 100,
+            y: textsUsePercent ? t.y : ((t.y || 0) / imageHeight) * 100,
         }));
 
     const { doors, windows } = extractOpeningsFromText(textsWithCoords);

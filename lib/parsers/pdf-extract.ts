@@ -1,19 +1,18 @@
 // Server-side PDF geometry extraction using pdf.js
 // Extracts wall lines, text labels, and dimensions from architectural PDFs
 
-import { readFile } from 'fs/promises';
+import { access } from 'fs/promises';
 import path from 'path';
 import { spawn, spawnSync } from 'child_process';
-import { access } from 'fs/promises';
 import { renderPdfToPng } from '@/lib/conversion/pdf-to-png';
 
-interface ExtractedLine {
+export interface ExtractedLine {
   x1: number; y1: number;
   x2: number; y2: number;
   width: number;
 }
 
-interface ExtractedText {
+export interface ExtractedText {
   text: string;
   x: number; y: number;
   fontSize: number;

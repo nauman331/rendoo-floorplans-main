@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { renderPdfToPng } from '@/lib/conversion/pdf-to-png';
 import { parseDwgFile, renderDwgToPng } from '@/lib/parsers/dwg-parse';
 import { findDxfUnitLabels } from '@/lib/parsers/dxf-parse';
+import { extractPdfGeometry, findUnitLabels as findPdfUnitLabels } from '@/lib/parsers/pdf-extract';
 import { detectRooms, groupRoomsIntoUnits } from '@/lib/parsers/room-detection';
 
 /**
@@ -44,7 +45,9 @@ export async function POST(request: NextRequest) {
   const fileName = `${fileId}.${ext}`;
 
   const uploadsDir = path.join(process.cwd(), 'uploads');
+  const cacheDir = path.join(uploadsDir, 'cache');
   await mkdir(uploadsDir, { recursive: true });
+  await mkdir(cacheDir, { recursive: true });
 
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
@@ -75,6 +78,20 @@ export async function POST(request: NextRequest) {
         },
         { status: 422 }
       );
+    }
+
+    try {
+      const extraction = await extractPdfGeometry(filePath);
+      await writeFile(
+        path.join(cacheDir, `${fileId}-pdf.json`),
+        JSON.stringify(extraction, null, 2)
+      );
+      const labels = findPdfUnitLabels(extraction.texts || []);
+      console.log(
+        `[upload] PDF geometry extracted: ${extraction.wallLines.length} walls, ${extraction.texts.length} texts, ${labels.length} labels`
+      );
+    } catch (err) {
+      console.warn('[upload] PDF geometry extraction failed (non-fatal):', err);
     }
   }
 

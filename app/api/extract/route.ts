@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
-import { extractPdfGeometry, findUnitLabels, pdfToPercent } from '@/lib/parsers/pdf-extract';
+import { readFile } from 'fs/promises';
+import { extractPdfGeometry, findUnitLabels, type PdfExtraction, type ExtractedLine, type ExtractedText } from '@/lib/parsers/pdf-extract';
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
@@ -8,12 +9,20 @@ export async function POST(request: NextRequest) {
 
   const uploadsDir = path.join(process.cwd(), 'uploads');
   const pdfPath = path.join(uploadsDir, `${fileId}.pdf`);
+  const cacheDir = path.join(uploadsDir, 'cache');
+  const cachePath = path.join(cacheDir, `${fileId}-pdf.json`);
 
   try {
-    const extraction = await extractPdfGeometry(pdfPath);
+    let extraction: PdfExtraction;
+    try {
+      const cached = await readFile(cachePath, 'utf-8');
+      extraction = JSON.parse(cached) as PdfExtraction;
+    } catch {
+      extraction = await extractPdfGeometry(pdfPath);
+    }
 
     // Convert to percentage coordinates
-    const wallLinesPercent = extraction.wallLines.map(l => ({
+    const wallLinesPercent = extraction.wallLines.map((l: ExtractedLine) => ({
       x1: (l.x1 / extraction.width) * 100,
       y1: (l.y1 / extraction.height) * 100,
       x2: (l.x2 / extraction.width) * 100,
@@ -21,7 +30,7 @@ export async function POST(request: NextRequest) {
       width: l.width,
     }));
 
-    const textsPercent = extraction.texts.map(t => ({
+    const textsPercent = extraction.texts.map((t: ExtractedText) => ({
       ...t,
       x: (t.x / extraction.width) * 100,
       y: (t.y / extraction.height) * 100,
