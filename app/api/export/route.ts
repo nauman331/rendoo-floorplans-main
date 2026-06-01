@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { CanvasRenderingContext2D } from 'canvas';
+import type { jsPDF as JsPDFType } from 'jspdf';
 import type { DetectedUnit } from '@/types/project';
-import { applyMoodTokensToSVG, getMoodTokens } from '@/lib/render/mood-tokens';
+import { getMoodTokens, generateMoodCSS, generateMoodSVGFilter } from '@/lib/render/mood-tokens';
 
 /**
  * Stage 07: Export Pipeline
@@ -84,24 +86,34 @@ export function exportSVG(
     const width = options.width || drawing.width || 1200;
     const height = options.height || drawing.height || 1600;
 
+    // If a mood is specified, generate CSS variables and an SVG filter
+    let moodCSS = '';
+    let moodFilter = '';
+    if (options.mood) {
+        moodCSS = generateMoodCSS(options.mood);
+        moodFilter = generateMoodSVGFilter(options.mood, 'moodFilter');
+    }
+
     let svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
   <defs>
     <style>
-      .unit-polygon { fill: {{mood.walls}}; stroke: {{mood.doors}}; stroke-width: 2; }
-      .unit-label { font-family: {{mood.font-family}}; font-size: 14px; fill: {{mood.text}}; }
-      .watermark { font-size: 12px; fill: {{mood.text}}; opacity: 0.3; }
+      ${moodCSS}
+      .unit-polygon { fill: var(--mood-walls); stroke: var(--mood-doors); stroke-width: 2; }
+      .unit-label { font-family: var(--mood-font-family); font-size: var(--mood-font-size); fill: var(--mood-label-color); }
+      .watermark { font-size: 12px; fill: var(--mood-text); opacity: 0.3; }
     </style>
+    ${moodFilter}
   </defs>
 
   <!-- Background -->
-  <rect width="${width}" height="${height}" fill="{{mood.primary}}"/>
+  <rect width="${width}" height="${height}" fill="var(--mood-primary)"/>
 
   <!-- Base image reference (if available) -->
   <!-- <image href="${drawing.imageUrl}" width="${width}" height="${height}"/> -->
 
   <!-- Units -->
-  <g id="units">
+  <g id="units" filter="${options.mood ? 'url(#moodFilter)' : ''}">
 `;
 
     // Add each unit as a polygon
@@ -140,11 +152,6 @@ export function exportSVG(
 </svg>
 `;
 
-    // Apply mood tokens if specified
-    if (options.mood) {
-        svg = applyMoodTokensToSVG(svg, options.mood);
-    }
-
     return svg;
 }
 
@@ -168,11 +175,11 @@ export async function exportPDF(
 ): Promise<Buffer> {
     const { jsPDF } = await import('jspdf');
 
-    const doc: any = new jsPDF({
+    const doc = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4',
-    });
+    }) as unknown as JsPDFType;
 
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -241,32 +248,41 @@ export async function exportPDF(
  * Draw units on canvas
  */
 function drawUnitsOnCanvas(
-    ctx: any,
+    ctx: CanvasRenderingContext2D,
     units: DetectedUnit[],
     width: number,
     height: number
 ): void {
-    ctx.strokeStyle = '#333333';
     ctx.lineWidth = 2;
-    ctx.fillStyle = '#F0F0F0';
+    ctx.font = '14px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
 
     for (const unit of units) {
         if (!unit.polygon || unit.polygon.length < 3) continue;
 
-        // Scale polygon to canvas coordinates
         ctx.beginPath();
-        // Draw polygon outline explicitly to avoid jsPDF.lines incompatibility.
-        doc.setDrawColor(wallR, wallG, wallB);
-        doc.setLineWidth(0.75);
+        unit.polygon.forEach((point, index) => {
+            const x = (point.x / 100) * width;
+            const y = (point.y / 100) * height;
+            if (index === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        });
+        ctx.closePath();
 
-        for (let i = 0; i < pdfPoints.length; i++) {
-            const current = pdfPoints[i];
-            const next = pdfPoints[(i + 1) % pdfPoints.length];
-            doc.line(current[0], current[1], next[0], next[1]);
-        }
-        ctx.font = '14px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#F0F0F0';
+        ctx.fill();
+
+        ctx.strokeStyle = '#333333';
+        ctx.stroke();
+
+        const cx = (unit.polygon.reduce((s, p) => s + p.x, 0) / unit.polygon.length / 100) * width;
+        const cy = (unit.polygon.reduce((s, p) => s + p.y, 0) / unit.polygon.length / 100) * height;
+
+        ctx.fillStyle = '#111111';
         ctx.fillText(unit.label || unit.id, cx, cy);
     }
 }
@@ -275,7 +291,7 @@ function drawUnitsOnCanvas(
  * Add watermark to canvas
  */
 function addWatermarkToCanvas(
-    ctx: any,
+    ctx: CanvasRenderingContext2D,
     watermark: { text: string; opacity?: number },
     width: number,
     height: number

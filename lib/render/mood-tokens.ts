@@ -240,7 +240,6 @@ export function applyMoodTokensToSVG(svgContent: string, mood: MoodType | string
 
     // Replace lighting adjustments (CSS filter)
     const brightnessPercent = tokens.lighting.brightness;
-    const warmthShift = tokens.lighting.warmth;
     const contrastShift = tokens.lighting.contrast;
 
     const filterValue = `brightness(${brightnessPercent}%) contrast(${100 + contrastShift}%)`;
@@ -265,7 +264,6 @@ export function generateMoodSVGFilter(mood: MoodType | string, filterId: string 
     const bShift = 1 - warmthFactor * 0.1;
 
     return `
-    <defs>
       <filter id="${filterId}">
         <feColorMatrix
           type="matrix"
@@ -278,7 +276,6 @@ export function generateMoodSVGFilter(mood: MoodType | string, filterId: string 
           <feFuncA type="linear" slope="1"/>
         </feComponentTransfer>
       </filter>
-    </defs>
   `;
 }
 
@@ -301,10 +298,10 @@ export function getContrastColor(moodType: MoodType | string, useLight: boolean 
     const tokens = getMoodTokens(moodType);
     const bgBrightness = tokens.lighting.brightness;
 
-    // If background is bright, use dark text; if dark, use light text
-    if (bgBrightness > 50) {
-        return tokens.colors.text;
-    } else {
+    if (!useLight) {
         return '#FFFFFF';
     }
+
+    // If background is bright, use text from the palette; otherwise use white.
+    return bgBrightness > 50 ? tokens.colors.text : '#FFFFFF';
 }

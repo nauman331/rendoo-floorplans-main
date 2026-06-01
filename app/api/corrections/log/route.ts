@@ -13,7 +13,7 @@ interface CorrectionLogRequest {
     projectId: string;
     fileId: string;
     correctionType: 'polygon_edit' | 'unit_classification' | 'furniture_placement';
-    unitId: string;
+    unitId?: string;
     beforeState: {
         polygon?: Point[];
         classification?: string;
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
                     project_id: body.projectId,
                     file_id: body.fileId,
                     correction_type: body.correctionType,
-                    unit_id: body.unitId,
+                    unit_id: body.unitId || null,
 
                     // Before state
                     before_polygon:
@@ -207,7 +207,7 @@ export async function POST(request: NextRequest) {
         }
 
         console.log(
-            `[corrections/log] Logged ${body.correctionType} for unit ${body.unitId} (confidence: ${body.correctionConfidence})`
+            `[corrections/log] Logged ${body.correctionType} for unit ${body.unitId ?? 'unknown'} (confidence: ${body.correctionConfidence})`
         );
 
         return NextResponse.json(
