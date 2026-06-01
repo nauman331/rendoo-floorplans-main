@@ -405,6 +405,7 @@ export default function ResultaatPage() {
 
   const handleExport = async (format: ExportFormat) => {
     if (!renderUnit) return;
+    console.log('[result page] export request', { format, renderUnitId: renderUnit.id, projectName });
     setExportingFormat(format);
     try {
       if (format === 'png') {
@@ -432,6 +433,7 @@ export default function ResultaatPage() {
           },
         }),
       });
+      console.log('[result page] export API response', { format, status: response.status });
 
       if (!response.ok) {
         throw new Error(`Export failed (${response.status})`);
@@ -445,7 +447,7 @@ export default function ResultaatPage() {
         downloadBlob(blob, `${projectName}-${renderUnit.typeGroup}.pdf`);
       }
     } catch (error) {
-      console.error('Export failed:', error);
+      console.error('[result page] Export failed:', error);
       alert(`Export mislukt voor ${format.toUpperCase()}. Probeer opnieuw.`);
     } finally {
       setExportingFormat(null);

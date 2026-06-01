@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { DetectedUnit } from '@/types/project';
-import { applyMoodTokensToSVG } from '@/lib/render/mood-tokens';
+import { applyMoodTokensToSVG, getMoodTokens } from '@/lib/render/mood-tokens';
 
 /**
  * Stage 07: Export Pipeline
@@ -152,6 +152,16 @@ export function exportSVG(
  * Export as PDF (print-ready)
  * Requires jsPDF library
  */
+function parseHexColor(hex: string): [number, number, number] {
+    const parsed = hex.replace('#', '');
+    const bigint = parseInt(parsed, 16);
+    return [
+        (bigint >> 16) & 255,
+        (bigint >> 8) & 255,
+        bigint & 255,
+    ];
+}
+
 export async function exportPDF(
     drawing: CanvasDrawing,
     options: ExportOptions
@@ -167,6 +177,13 @@ export async function exportPDF(
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
 
+    const mood = getMoodTokens(options.mood || 'basic');
+
+    // Draw page background
+    const [bgR, bgG, bgB] = parseHexColor(mood.colors.primary);
+    doc.setFillColor(bgR, bgG, bgB);
+    doc.rect(0, 0, pageWidth, pageHeight, 'F');
+
     // Draw base image if provided
     if (drawing.imageUrl) {
         try {
@@ -177,8 +194,10 @@ export async function exportPDF(
     }
 
     // Add units as outlines
-    doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(0.5);
+    const [wallR, wallG, wallB] = parseHexColor(mood.colors.walls);
+    doc.setDrawColor(wallR, wallG, wallB);
+    doc.setFillColor(wallR, wallG, wallB);
+    doc.setLineWidth(0.75);
 
     for (const unit of drawing.units) {
         if (!unit.polygon || unit.polygon.length < 3) continue;
@@ -189,17 +208,15 @@ export async function exportPDF(
             10 + (p.y / 100) * (pageHeight - 40),
         ]);
 
-        // Draw polygon using lines (jsPDF doesn't have polygon method)
-        doc.setFillColor(240, 240, 240);
-        const lineDeltas = [];
+        // Draw polygon outline explicitly to avoid jsPDF.lines incompatibility.
+        doc.setDrawColor(wallR, wallG, wallB);
+        doc.setLineWidth(0.75);
+
         for (let i = 0; i < pdfPoints.length; i++) {
             const current = pdfPoints[i];
             const next = pdfPoints[(i + 1) % pdfPoints.length];
-            lineDeltas.push([next[0] - current[0], next[1] - current[1]]);
+            doc.line(current[0], current[1], next[0], next[1]);
         }
-        // jsPDF.lines expects a numeric scale; passing an empty array caused
-        // "Invalid argument passed to jsPDF.scale". Use scale=1 and stroke ('S').
-        doc.lines(lineDeltas, pdfPoints[0][0], pdfPoints[0][1], 1, 'S');
 
         // Add label
         const cx = (unit.polygon.reduce((s, p) => s + p.x, 0) / unit.polygon.length / 100) * (pageWidth - 20) + 10;
@@ -238,26 +255,15 @@ function drawUnitsOnCanvas(
 
         // Scale polygon to canvas coordinates
         ctx.beginPath();
-        for (let i = 0; i < unit.polygon.length; i++) {
-            const p = unit.polygon[i];
-            const x = (p.x / 100) * width;
-            const y = (p.y / 100) * height;
+        // Draw polygon outline explicitly to avoid jsPDF.lines incompatibility.
+        doc.setDrawColor(wallR, wallG, wallB);
+        doc.setLineWidth(0.75);
 
-            if (i === 0) {
-                ctx.moveTo(x, y);
-            } else {
-                ctx.lineTo(x, y);
-            }
+        for (let i = 0; i < pdfPoints.length; i++) {
+            const current = pdfPoints[i];
+            const next = pdfPoints[(i + 1) % pdfPoints.length];
+            doc.line(current[0], current[1], next[0], next[1]);
         }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-
-        // Add unit label
-        const cx = (unit.polygon.reduce((s, p) => s + p.x, 0) / unit.polygon.length / 100) * width;
-        const cy = (unit.polygon.reduce((s, p) => s + p.y, 0) / unit.polygon.length / 100) * height;
-
-        ctx.fillStyle = '#000000';
         ctx.font = '14px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -300,6 +306,7 @@ export async function handleExport(
     contentType: string;
     filename: string;
 }> {
+    console.log('[export api] handleExport', { width: drawing.width, height: drawing.height, format: options.format, mood: options.mood });
     let data: Buffer | string;
     let contentType: string;
     let filename: string;
@@ -338,8 +345,8 @@ export async function handleExport(
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-
         const { drawing, options } = body;
+        console.log('[export api] POST', { drawing: drawing ? { units: drawing.units?.length, width: drawing.width, height: drawing.height } : null, options });
 
         if (!drawing) {
             return NextResponse.json({ error: 'Missing drawing data' }, { status: 400 });

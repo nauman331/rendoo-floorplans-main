@@ -173,6 +173,13 @@ export default function InputPage() {
     const type = getFileType(file.name);
     if (!type) return;
 
+    console.log('[upload page] start upload', {
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: type,
+      projectName: project?.name,
+    });
+
     setUploadError(null);
     setUploadState('uploading');
     setProgress(0);
@@ -188,6 +195,7 @@ export default function InputPage() {
       formData.append('projectName', project.name);
       const endpoint = type === 'dxf' ? '/api/upload-dxf' : '/api/upload';
       const res = await fetch(endpoint, { method: 'POST', body: formData });
+      console.log('[upload page] upload response', { endpoint, status: res.status });
 
       // Handle structured error responses (e.g. DWG conversion not
       // available, complex PDF couldn't be rendered) — surface them in
@@ -215,6 +223,7 @@ export default function InputPage() {
         fileId?: string;
         rasterUrl?: string;
       };
+      console.log('[upload page] upload result', uploadResponse);
 
       // CSV/Excel (optional)
       let csvUploadResult: CsvUploadResult | null = null;
@@ -381,10 +390,10 @@ export default function InputPage() {
                   }}
                   onClick={() => inputRef.current?.click()}
                   className={`flex cursor-pointer flex-col rounded-xl border-2 border-dashed px-3 py-3 transition-all ${isActive
-                      ? 'border-rendoo-500 bg-rendoo-50 shadow-lg shadow-rendoo-200/40'
-                      : isDragging
-                        ? 'border-rendoo-400 bg-rendoo-50'
-                        : 'border-gray-300 bg-white hover:border-rendoo-300 hover:bg-rendoo-50/40'
+                    ? 'border-rendoo-500 bg-rendoo-50 shadow-lg shadow-rendoo-200/40'
+                    : isDragging
+                      ? 'border-rendoo-400 bg-rendoo-50'
+                      : 'border-gray-300 bg-white hover:border-rendoo-300 hover:bg-rendoo-50/40'
                     }`}
                 >
                   <input
@@ -402,8 +411,8 @@ export default function InputPage() {
                     <div className="flex items-center gap-2">
                       <span
                         className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-bold ${isActive
-                            ? 'bg-rendoo-600 text-white'
-                            : 'bg-gray-100 text-gray-700'
+                          ? 'bg-rendoo-600 text-white'
+                          : 'bg-gray-100 text-gray-700'
                           }`}
                       >
                         {meta.title}
@@ -500,10 +509,10 @@ export default function InputPage() {
             }}
             onClick={() => csvInputRef.current?.click()}
             className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed px-4 py-3 transition-colors ${csvFile
+              ? 'border-rendoo-400 bg-rendoo-50'
+              : dragCsv
                 ? 'border-rendoo-400 bg-rendoo-50'
-                : dragCsv
-                  ? 'border-rendoo-400 bg-rendoo-50'
-                  : 'border-gray-300 bg-white hover:border-rendoo-300 hover:bg-rendoo-50/40'
+                : 'border-gray-300 bg-white hover:border-rendoo-300 hover:bg-rendoo-50/40'
               }`}
           >
             <input

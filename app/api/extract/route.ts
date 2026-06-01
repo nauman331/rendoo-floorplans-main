@@ -12,13 +12,25 @@ export async function POST(request: NextRequest) {
   const cacheDir = path.join(uploadsDir, 'cache');
   const cachePath = path.join(cacheDir, `${fileId}-pdf.json`);
 
+  console.log('[extract api] request', { fileId, pdfPath, cachePath });
+
   try {
     let extraction: PdfExtraction;
     try {
       const cached = await readFile(cachePath, 'utf-8');
       extraction = JSON.parse(cached) as PdfExtraction;
+      console.log('[extract api] using cached extraction', {
+        fileId,
+        wallLines: extraction.wallLines.length,
+        texts: extraction.texts.length,
+      });
     } catch {
       extraction = await extractPdfGeometry(pdfPath);
+      console.log('[extract api] extracted PDF geometry', {
+        fileId,
+        wallLines: extraction.wallLines.length,
+        texts: extraction.texts.length,
+      });
     }
 
     // Convert to percentage coordinates
@@ -56,7 +68,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('PDF extraction error:', error);
+    console.error('[extract api] error', error);
     return NextResponse.json({ status: 'error', error: String(error) }, { status: 500 });
   }
 }

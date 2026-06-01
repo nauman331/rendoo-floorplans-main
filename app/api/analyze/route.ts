@@ -317,6 +317,7 @@ function buildAnalysisFromDxfAndCsv(
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const { fileId, forceRefresh, csvFileId } = body;
+  console.log('[analyze api] request', { fileId, forceRefresh, csvFileId });
 
   // Check cache first (unless force refresh)
   if (!forceRefresh && fileId) {
@@ -343,6 +344,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!imageBase64) {
+    console.error('[analyze api] missing image for', fileId);
     return NextResponse.json(
       { error: 'No image file found. Upload must produce a valid PNG/image file.' },
       { status: 400 }
@@ -493,7 +495,11 @@ export async function POST(request: NextRequest) {
       // Cache
       if (fileId) await cacheAnalysis(fileId, gpt4Analysis);
 
-      console.log(`gpt-5 detected ${gpt4Analysis.totalUnits} units`);
+      console.log(`gpt-5 detected ${gpt4Analysis.totalUnits} units`, {
+        source: 'gpt4_vision',
+        aiModel: openaiVisionModel,
+        dxfWalls: overlayWalls.length,
+      });
       return NextResponse.json({
         status: 'complete',
         analysis: gpt4Analysis,
@@ -503,8 +509,9 @@ export async function POST(request: NextRequest) {
         dxfWalls: overlayWalls.length > 0 ? overlayWalls : undefined,
       });
     } catch (gpt4Err) {
-      console.error('gpt-5 Vision analysis failed:', gpt4Err);
+      console.error('[analyze api] gpt-5 Vision analysis failed:', gpt4Err);
       if (dxfData) {
+        console.log('[analyze api] falling back to dxf_csv_fallback', { fileId, csvFileId });
         const fallbackAnalysis = buildAnalysisFromDxfAndCsv(dxfData, csvData);
         if (fileId) await cacheAnalysis(fileId, fallbackAnalysis);
         return NextResponse.json({
@@ -529,6 +536,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (dxfData) {
+    console.log('[analyze api] no OpenAI key, using DXF fallback', { fileId, csvFileId });
     const fallbackAnalysis = buildAnalysisFromDxfAndCsv(dxfData, csvData);
     if (fileId) await cacheAnalysis(fileId, fallbackAnalysis);
     return NextResponse.json({

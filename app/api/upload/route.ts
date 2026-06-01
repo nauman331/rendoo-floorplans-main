@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
   const buffer = Buffer.from(bytes);
   const filePath = path.join(uploadsDir, fileName);
   await writeFile(filePath, buffer);
+  console.log('[upload api] received file', { fileId, fileName, ext, projectName, size: file.size });
 
   let rasterUrl: string | undefined;
 
@@ -169,7 +170,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({
+  const responsePayload = {
     fileId,
     fileName: file.name,
     size: file.size,
@@ -177,5 +178,7 @@ export async function POST(request: NextRequest) {
     url: `/api/files/${fileName}`,
     rasterUrl: rasterUrl || `/api/files/${fileName}`,
     projectName,
-  });
+  };
+  console.log('[upload api] upload complete', responsePayload);
+  return NextResponse.json(responsePayload);
 }

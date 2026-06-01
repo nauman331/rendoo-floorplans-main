@@ -181,7 +181,10 @@ export const MOOD_PALETTES: Record<MoodType, MoodTokens> = {
  * Get tokens for a specific mood
  */
 export function getMoodTokens(mood: MoodType | string): MoodTokens {
-    const validMood = mood as MoodType;
+    const normalized = mood.toLowerCase();
+    if (normalized === 'basic') return MOOD_PALETTES.scandi;
+    if (normalized === 'luxe') return MOOD_PALETTES.moody;
+    const validMood = normalized as MoodType;
     return MOOD_PALETTES[validMood] || MOOD_PALETTES.warm;
 }
 

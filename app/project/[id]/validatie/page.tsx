@@ -174,6 +174,7 @@ export default function ValidatiePage() {
           typeof window !== 'undefined'
             ? sessionStorage.getItem('rendoo-csv-file-id')
             : null;
+        console.log('[validatie] calling /api/analyze', { fileId: uploadedFile?.id, rasterUrl: uploadedFile?.rasterUrl, csvFileId });
         const res = await fetch('/api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -193,6 +194,7 @@ export default function ValidatiePage() {
           throw new Error(`Analyse mislukt (${res.status})`);
         }
 
+        console.log('[validatie] /api/analyze response', { status: res.status, data });
         if (data.error) {
           setAnalysisError(data.error || 'AI analysis failed');
         } else if (data.analysis) {
@@ -217,12 +219,14 @@ export default function ValidatiePage() {
     let cancelled = false;
     (async () => {
       try {
+        console.log('[validatie] calling /api/extract', { fileId });
         const res = await fetch('/api/extract', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fileId }),
         });
         const data = await res.json();
+        console.log('[validatie] /api/extract response', { status: res.status, data });
         if (
           !cancelled &&
           data.status === 'complete' &&
@@ -231,7 +235,7 @@ export default function ValidatiePage() {
           setWallLines(data.extraction.wallLines);
         }
       } catch (err) {
-        console.error('Wall extraction failed:', err);
+        console.error('[validatie] Wall extraction failed:', err);
       }
     })();
     return () => {
@@ -247,6 +251,7 @@ export default function ValidatiePage() {
         typeof window !== 'undefined'
           ? sessionStorage.getItem('rendoo-csv-file-id')
           : null;
+      console.log('[validatie] reanalyzing', { fileId: uploadedFile?.id, csvFileId });
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -257,6 +262,7 @@ export default function ValidatiePage() {
         }),
       });
       const data = await res.json();
+      console.log('[validatie] reanalyze response', { status: res.status, data });
 
       if (data.error) {
         setAnalysisError(data.error);
@@ -477,6 +483,10 @@ export default function ValidatiePage() {
             onUpdatePolygon={handleUpdatePolygon}
             wallLines={wallLines}
             showWallLines={showWallLines}
+            projectId={project.id}
+            fileId={uploadedFile?.id ?? ''}
+            inputFileType={uploadedFile?.type ?? 'pdf'}
+            moodId={project.outputType ?? undefined}
           />
 
           {/* Floating selection toolbar */}
