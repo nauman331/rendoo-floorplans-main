@@ -43,20 +43,23 @@ export async function POST(request: NextRequest) {
         if (
             !body.projectId ||
             !body.fileId ||
-            !body.unitId ||
             !body.correctionType
         ) {
             try {
                 const cacheDir = process.env.CACHE_DIR || 'uploads/cache';
                 await mkdir(cacheDir, { recursive: true });
                 const fallbackFile = path.join(cacheDir, `invalid-correction-${Date.now()}.json`);
-                await writeFile(fallbackFile, JSON.stringify({ body, note: 'missing required fields' }, null, 2), 'utf8');
+                await writeFile(
+                    fallbackFile,
+                    JSON.stringify({ body, note: 'missing required fields (unitId optional)' }, null, 2),
+                    'utf8'
+                );
 
-                console.warn(`[corrections/log] Received invalid payload — saved to ${fallbackFile}`);
+                console.warn(`[corrections/log] Received incomplete payload — saved to ${fallbackFile}`);
 
                 return NextResponse.json(
                     {
-                        error: 'Missing required fields: projectId, fileId, unitId, correctionType',
+                        error: 'Missing required fields: projectId, fileId, correctionType',
                         correctionId: `invalid-${Date.now()}`,
                         message: 'Payload saved to local cache for later inspection',
                     },

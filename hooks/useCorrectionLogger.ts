@@ -107,31 +107,33 @@ export function useCorrectionLogger(options: CorrectionLoggerOptions) {
             }
 
             try {
+                const payload = {
+                    projectId: options.projectId,
+                    fileId: options.fileId,
+                    correctionType: 'unit_classification',
+                    unitId: unit?.id || null,
+                    beforeState: {
+                        classification: originalClassification,
+                        aiConfidence: unit.confidence,
+                        aiSource: 'gpt4_vision',
+                    },
+                    afterState: {
+                        classification: newClassification,
+                    },
+                    operatorNotes:
+                        operatorNotes ||
+                        `Classification changed from ${originalClassification} to ${newClassification}`,
+                    operatorConfidence: 0.95,
+                    correctionConfidence,
+                    moodId: options.moodId,
+                    inputFileType: options.inputFileType,
+                    operatorEmail: options.operatorEmail || 'anonymous',
+                };
+
                 const response = await fetch('/api/corrections/log', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        projectId: options.projectId,
-                        fileId: options.fileId,
-                        correctionType: 'unit_classification',
-                        unitId: unit.id,
-                        beforeState: {
-                            classification: originalClassification,
-                            aiConfidence: unit.confidence,
-                            aiSource: 'gpt4_vision',
-                        },
-                        afterState: {
-                            classification: newClassification,
-                        },
-                        operatorNotes:
-                            operatorNotes ||
-                            `Classification changed from ${originalClassification} to ${newClassification}`,
-                        operatorConfidence: 0.95,
-                        correctionConfidence,
-                        moodId: options.moodId,
-                        inputFileType: options.inputFileType,
-                        operatorEmail: options.operatorEmail || 'anonymous',
-                    }),
+                    body: JSON.stringify(payload),
                 });
 
                 if (!response.ok) {
