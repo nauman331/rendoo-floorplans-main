@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { Unit } from '@/types/project';
+import type { DetectedUnit } from '@/types/project';
 import { applyMoodTokensToSVG } from '@/lib/render/mood-tokens';
 
 /**
@@ -25,7 +25,7 @@ interface ExportOptions {
 
 interface CanvasDrawing {
     imageUrl?: string;
-    units: Unit[];
+    units: DetectedUnit[];
     selectedUnitId?: string | null;
     width: number;
     height: number;
@@ -158,7 +158,7 @@ export async function exportPDF(
 ): Promise<Buffer> {
     const { jsPDF } = await import('jspdf');
 
-    const doc = new jsPDF({
+    const doc: any = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4',
@@ -189,9 +189,17 @@ export async function exportPDF(
             10 + (p.y / 100) * (pageHeight - 40),
         ]);
 
-        // Draw polygon
+        // Draw polygon using lines (jsPDF doesn't have polygon method)
         doc.setFillColor(240, 240, 240);
-        doc.polygon(pdfPoints as [number, number][], 'S');
+        const lineDeltas = [];
+        for (let i = 0; i < pdfPoints.length; i++) {
+            const current = pdfPoints[i];
+            const next = pdfPoints[(i + 1) % pdfPoints.length];
+            lineDeltas.push([next[0] - current[0], next[1] - current[1]]);
+        }
+        // jsPDF.lines expects a numeric scale; passing an empty array caused
+        // "Invalid argument passed to jsPDF.scale". Use scale=1 and stroke ('S').
+        doc.lines(lineDeltas, pdfPoints[0][0], pdfPoints[0][1], 1, 'S');
 
         // Add label
         const cx = (unit.polygon.reduce((s, p) => s + p.x, 0) / unit.polygon.length / 100) * (pageWidth - 20) + 10;
@@ -216,8 +224,8 @@ export async function exportPDF(
  * Draw units on canvas
  */
 function drawUnitsOnCanvas(
-    ctx: CanvasRenderingContext2D,
-    units: Unit[],
+    ctx: any,
+    units: DetectedUnit[],
     width: number,
     height: number
 ): void {
@@ -261,7 +269,7 @@ function drawUnitsOnCanvas(
  * Add watermark to canvas
  */
 function addWatermarkToCanvas(
-    ctx: CanvasRenderingContext2D,
+    ctx: any,
     watermark: { text: string; opacity?: number },
     width: number,
     height: number
@@ -339,7 +347,12 @@ export async function POST(request: NextRequest) {
 
         const result = await handleExport(drawing, options || {});
 
-        return new NextResponse(result.data, {
+        // Convert Buffer or string to Uint8Array
+        const bodyData = typeof result.data === 'string'
+            ? new TextEncoder().encode(result.data)
+            : new Uint8Array(result.data);
+
+        return new NextResponse(bodyData, {
             status: 200,
             headers: {
                 'Content-Type': result.contentType,

@@ -5,7 +5,6 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
   serverExternalPackages: [
-    '@anthropic-ai/sdk',
     // libredwg-web ships a 4MB WASM blob next to its JS glue code.
     // Marking it external keeps Next.js from bundling the JS, so the
     // WASM loader can resolve the .wasm file at runtime via its

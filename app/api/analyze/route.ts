@@ -323,28 +323,6 @@ export async function POST(request: NextRequest) {
   const dxfData = fileId ? await loadDxfData(fileId) : null;
   const csvData = csvFileId ? await loadCsvData(csvFileId) : null;
 
-  // If we have DXF data WITH detected regions, build analysis from
-  // geometry + CSV. If walls exist but no regions were found (common
-  // with DWGs that have non-standard layer naming), fall through to
-  // gpt-5 Vision which analyzes the rendered PNG.
-  if (dxfData && dxfData.walls.length > 0 && dxfData.regions.length > 0) {
-    console.log(`Building analysis from DXF geometry (${dxfData.walls.length} walls, ${dxfData.regions.length} regions)`);
-    const analysis = buildAnalysisFromDxfAndCsv(dxfData, csvData);
-
-    // Cache the result
-    if (fileId) {
-      await cacheAnalysis(fileId, analysis);
-    }
-
-    return NextResponse.json({
-      status: 'complete',
-      analysis,
-      mock: false,
-      source: 'dxf',
-      dxfWalls: dxfData.walls,
-    });
-  }
-
   // Load the plan image
   const uploadsDir = path.join(process.cwd(), 'uploads');
   let imageBase64 = '';

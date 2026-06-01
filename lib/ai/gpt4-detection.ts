@@ -26,6 +26,10 @@ interface GPT4AnalysisResult {
     mirroredTypes: number;
     floors: { index: number; label: string }[];
     units: GPT4Unit[];
+    source?: 'gpt4_vision';
+    aiModel?: string;
+    pipelineStatus?: 'complete' | 'error';
+    pipelineError?: string;
 }
 
 const GPT4_PROMPT = `Je bent een expert in het analyseren van architecturale plattegronden. Analyseer dit plan zeer nauwkeurig.

@@ -5,6 +5,7 @@ import dynamic_import from 'next/dynamic';
 import { useRouter, useParams } from 'next/navigation';
 import { useProjectStore } from '@/stores/project-store';
 import type { DetectedUnit, FloorplanAnalysis, Point, WallLine } from '@/types/project';
+import { useCorrectionLogger } from '@/hooks/useCorrectionLogger';
 
 const PlanCanvas = dynamic_import(() => import('@/components/viewer/PlanCanvas'), {
   ssr: false,
@@ -125,6 +126,13 @@ export default function ValidatiePage() {
   const projectId = params.id;
 
   const { project, setAnalysis } = useProjectStore();
+  const uploadedFile = project?.files[0];
+  const correctionLogger = useCorrectionLogger({
+    projectId: project?.id ?? '',
+    fileId: uploadedFile?.id ?? '',
+    inputFileType: (uploadedFile?.type as 'dwg' | 'dxf' | 'pdf') || 'pdf',
+    operatorEmail: undefined,
+  });
   const [isAnalyzing, setIsAnalyzing] = useState(true);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -140,7 +148,6 @@ export default function ValidatiePage() {
 
 
   const analysis = project?.analysis;
-  const uploadedFile = project?.files[0];
   const pipelineSource = analysis?.source ?? 'gpt4_vision';
   const pipelineModel = analysis?.aiModel ?? 'gpt-5';
 
@@ -283,6 +290,36 @@ export default function ValidatiePage() {
       });
     },
     [analysis, setAnalysis]
+  );
+
+  // Classification change handler — updates analysis and logs the correction
+  const handleChangeClassification = useCallback(
+    async (unitId: string, newClassification: 'hoofdtype' | 'gespiegeld' | 'variant') => {
+      if (!analysis) return;
+      const unit = analysis.units.find((u) => u.id === unitId);
+      if (!unit) return;
+      const original = unit.classification;
+
+      // Update analysis state
+      const newUnits = analysis.units.map((u) =>
+        u.id === unitId ? { ...u, classification: newClassification } : u
+      );
+      setAnalysis({ ...analysis, units: newUnits });
+      setEditedUnitIds((prev) => {
+        if (prev.has(unitId)) return prev;
+        const next = new Set(prev);
+        next.add(unitId);
+        return next;
+      });
+
+      // Log the correction (non-blocking)
+      try {
+        await correctionLogger.logClassificationChange(unit, original, newClassification);
+      } catch (err) {
+        console.warn('Failed to log classification change', err);
+      }
+    },
+    [analysis, setAnalysis, correctionLogger]
   );
 
   const handleTrainCorrection = async () => {
@@ -467,6 +504,32 @@ export default function ValidatiePage() {
                   </p>
                 </div>
                 <div className="h-6 w-px bg-border" />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleChangeClassification(selectedUnit.id, 'hoofdtype')}
+                    className={`rounded-full px-2 py-1 text-[11px] font-medium ${selectedUnit.classification === 'hoofdtype' ? 'bg-sky-50 text-sky-700 border border-sky-100' : 'bg-white text-gray-600 border border-border hover:bg-gray-50'}`}
+                    title="Markeer als hoofdtype"
+                  >
+                    Hoofdtype
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleChangeClassification(selectedUnit.id, 'gespiegeld')}
+                    className={`rounded-full px-2 py-1 text-[11px] font-medium ${selectedUnit.classification === 'gespiegeld' ? 'bg-sky-50 text-sky-700 border border-sky-100' : 'bg-white text-gray-600 border border-border hover:bg-gray-50'}`}
+                    title="Markeer als gespiegeld"
+                  >
+                    Gespiegeld
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleChangeClassification(selectedUnit.id, 'variant')}
+                    className={`rounded-full px-2 py-1 text-[11px] font-medium ${selectedUnit.classification === 'variant' ? 'bg-sky-50 text-sky-700 border border-sky-100' : 'bg-white text-gray-600 border border-border hover:bg-gray-50'}`}
+                    title="Markeer als variant"
+                  >
+                    Variant
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={handleTrainCorrection}

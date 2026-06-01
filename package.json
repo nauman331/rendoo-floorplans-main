@@ -10,7 +10,6 @@
     "postinstall": "node scripts/patch-libredwg.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.82.0",
     "@mlightcad/libredwg-web": "^0.6.10",
     "@supabase/supabase-js": "^2.106.2",
     "canvas": "^3.2.3",

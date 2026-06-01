@@ -3,6 +3,9 @@
 
 import { readFile } from 'fs/promises';
 import path from 'path';
+import { spawn, spawnSync } from 'child_process';
+import { access } from 'fs/promises';
+import { renderPdfToPng } from '@/lib/conversion/pdf-to-png';
 
 interface ExtractedLine {
   x1: number; y1: number;
@@ -25,97 +28,52 @@ export interface PdfExtraction {
 }
 
 export async function extractPdfGeometry(pdfPath: string): Promise<PdfExtraction> {
-  // Dynamic import for pdf.js (ESM module)
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  // Strict: require the Python-based PyMuPDF extractor. No JS fallback allowed.
+  const scriptPath = path.join(process.cwd(), 'scripts', 'py_extract.py');
+  await access(scriptPath);
+  // Spawn python script and capture stdout
+  const py = spawn('python3', [scriptPath, pdfPath], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const chunks: Buffer[] = [];
+  for await (const chunk of py.stdout) {
+    chunks.push(chunk as Buffer);
+  }
+  const out = Buffer.concat(chunks).toString('utf-8');
+  if (!out) throw new Error('Python extractor produced no output');
+  const parsed = JSON.parse(out);
+  if (parsed.error) throw new Error(`Python extractor error: ${parsed.error}`);
 
-  const data = await readFile(pdfPath);
-  const pdf = await pdfjsLib.getDocument({ data }).promise;
-  const page = await pdf.getPage(1);
-
-  const viewport = page.getViewport({ scale: 1.0 });
-  const width = viewport.width;
-  const height = viewport.height;
-
-  // Extract operator list (all drawing commands)
-  const opList = await page.getOperatorList();
-  const lines: ExtractedLine[] = [];
-  let currentLineWidth = 1;
-
-  // Parse PDF operators to extract lines
-  let currentX = 0, currentY = 0;
-  let moveX = 0, moveY = 0;
-
-  for (let i = 0; i < opList.fnArray.length; i++) {
-    const fn = opList.fnArray[i];
-    const args = opList.argsArray[i];
-
-    // OPS.setLineWidth
-    if (fn === 15) {
-      currentLineWidth = args[0] as number;
-    }
-    // OPS.moveTo
-    if (fn === 13) {
-      currentX = args[0] as number;
-      currentY = args[1] as number;
-      moveX = currentX;
-      moveY = currentY;
-    }
-    // OPS.lineTo
-    if (fn === 14) {
-      const x2 = args[0] as number;
-      const y2 = args[1] as number;
-      lines.push({
-        x1: currentX, y1: height - currentY, // Flip Y (PDF has origin at bottom)
-        x2: x2, y2: height - y2,
-        width: currentLineWidth,
-      });
-      currentX = x2;
-      currentY = y2;
-    }
-    // OPS.closePath
-    if (fn === 18) {
-      if (currentX !== moveX || currentY !== moveY) {
-        lines.push({
-          x1: currentX, y1: height - currentY,
-          x2: moveX, y2: height - moveY,
-          width: currentLineWidth,
-        });
-      }
-      currentX = moveX;
-      currentY = moveY;
-    }
-    // OPS.rectangle
-    if (fn === 16) {
-      const [rx, ry, rw, rh] = args as number[];
-      const fy = height - ry;
-      lines.push(
-        { x1: rx, y1: fy, x2: rx + rw, y2: fy, width: currentLineWidth },
-        { x1: rx + rw, y1: fy, x2: rx + rw, y2: fy - rh, width: currentLineWidth },
-        { x1: rx + rw, y1: fy - rh, x2: rx, y2: fy - rh, width: currentLineWidth },
-        { x1: rx, y1: fy - rh, x2: rx, y2: fy, width: currentLineWidth },
-      );
-    }
+  // If vector data found, return it directly
+  if (parsed.vector === true && parsed.lines && parsed.lines.length > 0) {
+    return {
+      width: parsed.width,
+      height: parsed.height,
+      lines: parsed.lines,
+      texts: parsed.texts || [],
+      wallLines: parsed.wallLines || [],
+    };
   }
 
-  // Extract text content
-  const textContent = await page.getTextContent();
-  const texts: ExtractedText[] = textContent.items
-    .filter((item) => 'str' in item && (item as { str: string }).str.trim().length > 0)
-    .map(item => {
-      const textItem = item as { str: string; transform: number[]; height?: number };
-      return {
-        text: textItem.str,
-        x: textItem.transform[4],
-        y: height - textItem.transform[5], // Flip Y
-        fontSize: textItem.height || 10,
-      };
-    });
+  // Otherwise, treat as scanned PDF: render PNG raster and run system Tesseract CLI
+  const pngFileName = path.join(process.cwd(), 'uploads', `${path.basename(pdfPath)}.raster.png`);
+  const renderResult = await renderPdfToPng(pdfPath, pngFileName);
+  if (!renderResult) throw new Error('Failed to render PDF to PNG for OCR');
 
-  // Identify wall lines (thicker lines, typically > 0.3mm in PDF units)
-  const wallThreshold = 0.3;
-  const wallLines = lines.filter(l => l.width >= wallThreshold);
+  // Run system tesseract CLI: output to stdout
+  const tess = spawnSync('tesseract', [pngFileName, 'stdout', '-l', 'eng'], { encoding: 'utf8' });
+  if (tess.status !== 0) {
+    throw new Error(`Tesseract failed: ${tess.stderr || tess.stdout}`);
+  }
+  const ocrText = (tess.stdout || '').trim();
+  const ocrLines = ocrText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const texts: ExtractedText[] = ocrLines.map(t => ({ text: t, x: 0, y: 0, fontSize: 10 }));
 
-  return { width, height, lines, texts, wallLines };
+  return {
+    width: parsed.width,
+    height: parsed.height,
+    lines: [],
+    texts,
+    wallLines: [],
+  };
 }
 
 // Find unit labels in extracted text (A1, B2, C3 patterns)
